@@ -1,0 +1,7 @@
+.next
+node_modules
+out
+.pnpm-store
+.env*.local
+*.tsbuildinfo
+*.log

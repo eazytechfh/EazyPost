@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #0a0a0a;
+  color: #ffffff;
+}
+
+::selection {
+  background: #25D366;
+  color: #0a0a0a;
+}
+
+@layer components {
+  .app-input {
+    @apply w-full rounded-md border border-app-border bg-app-card px-3 py-2.5 text-sm text-app-white outline-none transition placeholder:text-app-muted focus:border-app-green focus:shadow-green;
+  }
+
+  .app-label {
+    @apply text-sm font-medium text-app-white;
+  }
+
+  .app-button {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-app-green px-4 py-2.5 text-sm font-bold text-app-black transition hover:bg-app-greenHover disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .app-button-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-app-border bg-app-card px-4 py-2.5 text-sm font-semibold text-app-white transition hover:border-app-green;
+  }
+
+  .app-card {
+    @apply rounded-lg border border-app-border bg-app-card;
+  }
+}

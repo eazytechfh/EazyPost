@@ -1,0 +1,107 @@
+export type Profile = {
+  id: string;
+  email: string;
+  created_at: string;
+} & Record<string, unknown>;
+
+export type Veiculo = {
+  id: string;
+  user_id: string;
+  nome_anuncio: string;
+  quilometragem: string;
+  motor: string;
+  valor: number;
+  cor: string;
+  texto_anuncio: string;
+  imagens: string[];
+  status: string;
+  created_at: string;
+  updated_at: string;
+} & Record<string, unknown>;
+
+export type Grupo = {
+  id: string;
+  user_id: string;
+  nome: string;
+  link: string;
+  created_at: string;
+} & Record<string, unknown>;
+
+export type IdDosGrupos = {
+  id: string;
+  user_id: string;
+  nome_do_grupo: string;
+  id_do_grupo: string | null;
+  status: string;
+  created_at: string;
+} & Record<string, unknown>;
+
+export type AnuncioGrupo = {
+  id: string;
+  veiculo_id: string;
+  grupo_id: string;
+  user_id: string;
+  programado: boolean;
+  programado_em: string | null;
+  created_at: string;
+} & Record<string, unknown>;
+
+export type Database = {
+  public: {
+    Tables: {
+      profiles: {
+        Row: Profile;
+        Insert: {
+          id: string;
+          email: string;
+          created_at?: string;
+        };
+        Update: Partial<Profile>;
+        Relationships: [];
+      };
+      veiculos: {
+        Row: Veiculo;
+        Insert: Omit<Veiculo, "id" | "created_at" | "updated_at" | "status"> & {
+          id?: string;
+          status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Omit<Veiculo, "id" | "user_id" | "created_at">>;
+        Relationships: [];
+      };
+      grupos: {
+        Row: Grupo;
+        Insert: Omit<Grupo, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Omit<Grupo, "id" | "user_id" | "created_at">>;
+        Relationships: [];
+      };
+      id_dos_grupos: {
+        Row: IdDosGrupos;
+        Insert: Omit<IdDosGrupos, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Omit<IdDosGrupos, "id" | "user_id" | "created_at">>;
+        Relationships: [];
+      };
+      anuncio_grupos: {
+        Row: AnuncioGrupo;
+        Insert: Omit<AnuncioGrupo, "id" | "created_at" | "programado"> & {
+          id?: string;
+          programado?: boolean;
+          created_at?: string;
+        };
+        Update: Partial<Omit<AnuncioGrupo, "id" | "user_id" | "created_at">>;
+        Relationships: [];
+      };
+    };
+    Views: Record<string, never>;
+    Functions: Record<string, never>;
+    Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
+  };
+};
