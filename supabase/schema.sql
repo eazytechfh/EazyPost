@@ -41,12 +41,19 @@ create table if not exists public.id_dos_grupos (
 create table if not exists public.anuncio_grupos (
   id uuid primary key default gen_random_uuid(),
   veiculo_id uuid not null references public.veiculos(id) on delete cascade,
-  grupo_id uuid not null references public.grupos(id) on delete cascade,
+  grupo_id uuid not null references public.id_dos_grupos(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
   programado boolean not null default false,
   programado_em timestamp with time zone null,
   created_at timestamp with time zone default now()
 );
+
+alter table public.anuncio_grupos
+  drop constraint if exists anuncio_grupos_grupo_id_fkey;
+
+alter table public.anuncio_grupos
+  add constraint anuncio_grupos_grupo_id_fkey
+  foreign key (grupo_id) references public.id_dos_grupos(id) on delete cascade;
 
 alter table public.profiles enable row level security;
 alter table public.veiculos enable row level security;
@@ -114,6 +121,7 @@ drop policy if exists "veiculos_select_authenticated" on public.veiculos;
 drop policy if exists "veiculos_insert_own" on public.veiculos;
 drop policy if exists "veiculos_update_own" on public.veiculos;
 drop policy if exists "veiculos_delete_own" on public.veiculos;
+drop policy if exists "veiculos_delete_authenticated" on public.veiculos;
 
 create policy "veiculos_select_authenticated"
   on public.veiculos for select
@@ -128,15 +136,16 @@ create policy "veiculos_update_own"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
-create policy "veiculos_delete_own"
+create policy "veiculos_delete_authenticated"
   on public.veiculos for delete
-  using (auth.uid() = user_id);
+  using (auth.role() = 'authenticated');
 
 drop policy if exists "grupos_select_own" on public.grupos;
 drop policy if exists "grupos_select_authenticated" on public.grupos;
 drop policy if exists "grupos_insert_own" on public.grupos;
 drop policy if exists "grupos_update_own" on public.grupos;
 drop policy if exists "grupos_delete_own" on public.grupos;
+drop policy if exists "grupos_delete_authenticated" on public.grupos;
 
 create policy "grupos_select_authenticated"
   on public.grupos for select
@@ -151,9 +160,9 @@ create policy "grupos_update_own"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
-create policy "grupos_delete_own"
+create policy "grupos_delete_authenticated"
   on public.grupos for delete
-  using (auth.uid() = user_id);
+  using (auth.role() = 'authenticated');
 
 drop policy if exists "id_dos_grupos_select_own" on public.id_dos_grupos;
 drop policy if exists "id_dos_grupos_select_authenticated" on public.id_dos_grupos;
@@ -184,6 +193,7 @@ drop policy if exists "anuncio_grupos_select_authenticated" on public.anuncio_gr
 drop policy if exists "anuncio_grupos_insert_own" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_update_own" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_delete_own" on public.anuncio_grupos;
+drop policy if exists "anuncio_grupos_delete_authenticated" on public.anuncio_grupos;
 
 create policy "anuncio_grupos_select_authenticated"
   on public.anuncio_grupos for select
@@ -196,12 +206,10 @@ create policy "anuncio_grupos_insert_own"
     and exists (
       select 1 from public.veiculos
       where veiculos.id = anuncio_grupos.veiculo_id
-        and veiculos.user_id = auth.uid()
     )
     and exists (
-      select 1 from public.grupos
-      where grupos.id = anuncio_grupos.grupo_id
-        and grupos.user_id = auth.uid()
+      select 1 from public.id_dos_grupos
+      where id_dos_grupos.id = anuncio_grupos.grupo_id
     )
   );
 
@@ -210,9 +218,9 @@ create policy "anuncio_grupos_update_own"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
-create policy "anuncio_grupos_delete_own"
+create policy "anuncio_grupos_delete_authenticated"
   on public.anuncio_grupos for delete
-  using (auth.uid() = user_id);
+  using (auth.role() = 'authenticated');
 
 insert into storage.buckets (id, name, public)
 values ('veiculos-imagens', 'veiculos-imagens', true)

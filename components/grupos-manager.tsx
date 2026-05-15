@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, Search, Trash2, X } from "lucide-react";
+import { Loader2, Search, Trash2 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import type { IdDosGrupos } from "@/types/database";
 import { SectionHeader } from "./section-header";
@@ -17,7 +17,7 @@ type GroupIdResult = {
 export function GruposManager() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [savedGroupIds, setSavedGroupIds] = useState<IdDosGrupos[]>([]);
-  const [groupIdFields, setGroupIdFields] = useState([""]);
+  const [groupIdField, setGroupIdField] = useState("");
   const [groupIdResults, setGroupIdResults] = useState<GroupIdResult[]>([]);
   const [searchingGroupIds, setSearchingGroupIds] = useState(false);
   const [message, setMessage] = useState("");
@@ -128,20 +128,8 @@ export function GruposManager() {
     };
   }, [supabase]);
 
-  function updateGroupIdField(index: number, value: string) {
-    setGroupIdFields((current) => current.map((field, fieldIndex) => (fieldIndex === index ? value : field)));
-  }
-
-  function addGroupIdField() {
-    setGroupIdFields((current) => [...current, ""]);
-  }
-
-  function removeGroupIdField(index: number) {
-    setGroupIdFields((current) => (current.length === 1 ? current : current.filter((_, fieldIndex) => fieldIndex !== index)));
-  }
-
   async function searchGroupIds() {
-    const groupNames = groupIdFields.filter((field) => field.trim().length > 0);
+    const groupNames = groupIdField.trim().length > 0 ? [groupIdField] : [];
 
     if (groupNames.length === 0) {
       setMessage("Informe pelo menos um nome de grupo para procurar.");
@@ -220,14 +208,11 @@ export function GruposManager() {
       <SectionHeader title="Grupos" description="Cadastre os grupos do WhatsApp usados na divulgacao dos veiculos." />
 
       <div className="app-card mb-6 p-5">
-        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-4">
           <div>
             <h2 className="font-bold text-app-white">Buscar ID dos Grupos</h2>
             <p className="mt-1 text-sm text-app-muted">Digite os nomes dos grupos do WhatsApp para localizar os IDs.</p>
           </div>
-          <button type="button" className="app-button-secondary self-start sm:self-auto" onClick={addGroupIdField} aria-label="Adicionar grupo">
-            <Plus size={18} />
-          </button>
         </div>
 
         <div className="mb-4 rounded-md border border-[#f59e0b]/50 bg-[#451a03] p-3 text-sm leading-6 text-[#fef3c7]">
@@ -237,28 +222,12 @@ export function GruposManager() {
           Atenção: Digite o nome EXATO do grupo como aparece no WhatsApp, incluindo letras maiúsculas, minúsculas, espaços e emojis. Qualquer diferença impedirá a localização do grupo.
         </div>
 
-        <div className="grid gap-3">
-          {groupIdFields.map((field, index) => (
-            <div key={index} className="flex gap-2">
-              <input
-                className="app-input"
-                value={field}
-                onChange={(event) => updateGroupIdField(index, event.target.value)}
-                placeholder="Nome do grupo do WhatsApp"
-              />
-              {groupIdFields.length > 1 ? (
-                <button
-                  type="button"
-                  className="rounded-md border border-app-border bg-app-card p-2.5 text-app-white transition hover:border-red-500 hover:text-red-400"
-                  onClick={() => removeGroupIdField(index)}
-                  aria-label="Remover grupo"
-                >
-                  <X size={18} />
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
+        <input
+          className="app-input"
+          value={groupIdField}
+          onChange={(event) => setGroupIdField(event.target.value)}
+          placeholder="Nome do grupo do WhatsApp"
+        />
 
         <button type="button" className="app-button mt-4" onClick={searchGroupIds} disabled={searchingGroupIds}>
           {searchingGroupIds ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}

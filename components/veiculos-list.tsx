@@ -2,10 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { CalendarClock, Check, Edit3, MoreVertical, Trash2, Users, X } from "lucide-react";
+import { CalendarClock, Check, Edit3, Loader2, MoreVertical, Trash2, Users, X } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
-import type { AnuncioGrupo, Grupo, Veiculo } from "@/types/database";
+import type { AnuncioGrupo, IdDosGrupos, Veiculo } from "@/types/database";
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
 
@@ -13,27 +13,33 @@ type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor
   valor: string;
 };
 
-type LinkedGroupsByVehicle = Record<string, Grupo[]>;
+type LinkedGroupsByVehicle = Record<string, IdDosGrupos[]>;
 
 export function VeiculosList() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
-  const [grupos, setGrupos] = useState<Grupo[]>([]);
+  const [availableGroups, setAvailableGroups] = useState<IdDosGrupos[]>([]);
   const [linkedGroupsByVehicle, setLinkedGroupsByVehicle] = useState<LinkedGroupsByVehicle>({});
+  const [currentVehicleLinks, setCurrentVehicleLinks] = useState<AnuncioGrupo[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [editing, setEditing] = useState<Veiculo | null>(null);
   const [editForm, setEditForm] = useState<EditState | null>(null);
   const [groupVehicle, setGroupVehicle] = useState<Veiculo | null>(null);
-  const [selectedGroup, setSelectedGroup] = useState("");
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
+  const [savingGroups, setSavingGroups] = useState(false);
   const [programModal, setProgramModal] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     const [veiculosResult, gruposResult, linksResult] = await Promise.all([
       supabase.from("veiculos").select("*").order("created_at", { ascending: false }),
-      supabase.from("grupos").select("*").order("nome", { ascending: true }),
+      supabase
+        .from("id_dos_grupos")
+        .select("*")
+        .eq("status", "Encontrado")
+        .order("nome_do_grupo", { ascending: true }),
       supabase.from("anuncio_grupos").select("*")
     ]);
 
@@ -46,8 +52,7 @@ export function VeiculosList() {
     if (gruposResult.error) {
       setMessage(gruposResult.error.message);
     } else {
-      setGrupos(gruposResult.data ?? []);
-      setSelectedGroup(gruposResult.data?.[0]?.id ?? "");
+      setAvailableGroups(gruposResult.data ?? []);
     }
 
     if (linksResult.error) {
@@ -62,6 +67,45 @@ export function VeiculosList() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!groupVehicle) {
+      setCurrentVehicleLinks([]);
+      setSelectedGroupIds([]);
+      return;
+    }
+
+    const vehicleId = groupVehicle.id;
+
+    async function loadVehicleGroups() {
+      const [groupsResult, linksResult] = await Promise.all([
+        supabase
+          .from("id_dos_grupos")
+          .select("*")
+          .eq("status", "Encontrado")
+          .order("nome_do_grupo", { ascending: true }),
+        supabase
+          .from("anuncio_grupos")
+          .select("*")
+          .eq("veiculo_id", vehicleId)
+      ]);
+
+      if (groupsResult.error || linksResult.error) {
+        setMessage(groupsResult.error?.message ?? linksResult.error?.message ?? "Nao foi possivel carregar os grupos.");
+        setAvailableGroups([]);
+        setCurrentVehicleLinks([]);
+        setSelectedGroupIds([]);
+        return;
+      }
+
+      const links = linksResult.data ?? [];
+      setAvailableGroups(groupsResult.data ?? []);
+      setCurrentVehicleLinks(links);
+      setSelectedGroupIds(links.map((link) => link.grupo_id));
+    }
+
+    void loadVehicleGroups();
+  }, [groupVehicle, supabase]);
 
   function beginEdit(veiculo: Veiculo) {
     setEditing(veiculo);
@@ -114,9 +158,14 @@ export function VeiculosList() {
     setOpenMenu(null);
   }
 
-  async function linkGroup(programado: boolean) {
-    if (!groupVehicle || !selectedGroup) {
-      setMessage("Selecione um grupo para continuar.");
+  function toggleSelectedGroup(groupId: string) {
+    setSelectedGroupIds((current) =>
+      current.includes(groupId) ? current.filter((id) => id !== groupId) : [...current, groupId]
+    );
+  }
+
+  async function saveLinkedGroups() {
+    if (!groupVehicle) {
       return;
     }
 
@@ -129,34 +178,51 @@ export function VeiculosList() {
       return;
     }
 
-    const { error } = await supabase.from("anuncio_grupos").insert({
-      veiculo_id: groupVehicle.id,
-      grupo_id: selectedGroup,
-      user_id: user.id,
-      programado,
-      programado_em: programado ? new Date().toISOString() : null
-    });
+    setSavingGroups(true);
+    setMessage("");
 
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
+    const selectedSet = new Set(selectedGroupIds);
+    const currentSet = new Set(currentVehicleLinks.map((link) => link.grupo_id));
+    const linksToDelete = currentVehicleLinks.filter((link) => !selectedSet.has(link.grupo_id));
+    const groupIdsToInsert = selectedGroupIds.filter((groupId) => !currentSet.has(groupId));
 
-    const grupo = grupos.find((item) => item.id === selectedGroup);
-    setGroupVehicle(null);
+    try {
+      const deleteResults = await Promise.all(
+        linksToDelete.map((link) => supabase.from("anuncio_grupos").delete().eq("id", link.id))
+      );
+      const deleteError = deleteResults.find((result) => result.error)?.error;
 
-    if (programado) {
-      await programVehicle(groupVehicle, grupo ? [grupo] : []);
-    } else if (grupo) {
-      setMessage(`Grupo "${grupo.nome}" vinculado ao anuncio.`);
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      if (groupIdsToInsert.length > 0) {
+        const { error } = await supabase.from("anuncio_grupos").insert(
+          groupIdsToInsert.map((groupId) => ({
+            veiculo_id: groupVehicle.id,
+            grupo_id: groupId,
+            user_id: user.id
+          }))
+        );
+
+        if (error) {
+          throw error;
+        }
+      }
+
+      setGroupVehicle(null);
+      setCurrentVehicleLinks([]);
+      setSelectedGroupIds([]);
+      setMessage("Grupos do anuncio atualizados.");
       await loadData();
-    } else {
-      setMessage("Grupo vinculado ao anuncio.");
-      await loadData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Nao foi possivel atualizar os grupos do anuncio.");
+    } finally {
+      setSavingGroups(false);
     }
   }
 
-  async function programVehicle(veiculo: Veiculo, extraGroups: Grupo[] = []) {
+  async function programVehicle(veiculo: Veiculo) {
     setOpenMenu(null);
     setMessage("");
 
@@ -171,8 +237,8 @@ export function VeiculosList() {
       return;
     }
 
-    const linkedGroups = dedupeGroups([...(linkedGroupsByVehicle[veiculo.id] ?? []), ...extraGroups]);
-    const groupNames = linkedGroups.map((grupo) => grupo.nome).join(", ");
+    const linkedGroups = linkedGroupsByVehicle[veiculo.id] ?? [];
+    const groupNames = linkedGroups.map((grupo) => grupo.nome_do_grupo).join(", ");
 
     if (groupNames) {
       setProgramModal(`Anuncio programado! Em breve ele sera iniciado, acompanhe no grupo: ${groupNames}.`);
@@ -183,7 +249,7 @@ export function VeiculosList() {
     await loadData();
   }
 
-  const hasGroups = grupos.length > 0;
+  const hasGroups = availableGroups.length > 0;
 
   return (
     <section>
@@ -247,21 +313,29 @@ export function VeiculosList() {
           {hasGroups ? (
             <div className="space-y-4">
               <p className="text-sm text-app-muted">{groupVehicle.nome_anuncio}</p>
-              <select className="app-input" value={selectedGroup} onChange={(event) => setSelectedGroup(event.target.value)}>
-                {grupos.map((grupo) => (
-                  <option key={grupo.id} value={grupo.id} className="bg-app-card text-app-white">
-                    {grupo.nome}
-                  </option>
+              <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                {availableGroups.map((grupo) => (
+                  <label
+                    key={grupo.id}
+                    className="flex cursor-pointer items-start gap-3 rounded-md border border-app-border bg-app-card p-3 transition hover:border-app-green"
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 accent-app-green"
+                      checked={selectedGroupIds.includes(grupo.id)}
+                      onChange={() => toggleSelectedGroup(grupo.id)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-semibold text-app-white">{grupo.nome_do_grupo}</span>
+                      <span className="mt-1 block break-all text-xs text-app-muted">{grupo.id_do_grupo ?? "-"}</span>
+                    </span>
+                  </label>
                 ))}
-              </select>
+              </div>
               <div className="flex flex-col gap-3 sm:flex-row">
-                <button type="button" className="app-button" onClick={() => linkGroup(false)}>
-                  <Users size={18} />
-                  Vincular Grupo
-                </button>
-                <button type="button" className="app-button-secondary" onClick={() => linkGroup(true)}>
-                  <CalendarClock size={18} />
-                  Programar
+                <button type="button" className="app-button" onClick={saveLinkedGroups} disabled={savingGroups}>
+                  {savingGroups ? <Loader2 className="animate-spin" size={18} /> : <Users size={18} />}
+                  Salvar Grupos
                 </button>
               </div>
             </div>
@@ -294,7 +368,7 @@ function VehicleCard({
   onProgram
 }: {
   veiculo: Veiculo;
-  linkedGroups: Grupo[];
+  linkedGroups: IdDosGrupos[];
   menuOpen: boolean;
   onToggleMenu: () => void;
   onEdit: () => void;
@@ -349,11 +423,7 @@ function VehicleCard({
   );
 }
 
-function dedupeGroups(groups: Grupo[]) {
-  return groups.filter((grupo, index, list) => list.findIndex((item) => item.id === grupo.id) === index);
-}
-
-function buildLinkedGroupsMap(links: AnuncioGrupo[], grupos: Grupo[]) {
+function buildLinkedGroupsMap(links: AnuncioGrupo[], grupos: IdDosGrupos[]) {
   const groupsById = new Map(grupos.map((grupo) => [grupo.id, grupo]));
   const linkedGroupsByVehicle: LinkedGroupsByVehicle = {};
 
@@ -393,23 +463,12 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function LinkedGroups({ groups }: { groups: Grupo[] }) {
+function LinkedGroups({ groups }: { groups: IdDosGrupos[] }) {
   if (groups.length === 0) {
     return <p className="mt-1 text-xs text-app-muted">Nenhum grupo vinculado</p>;
   }
 
-  return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
-      {groups.map((grupo) => (
-        <span
-          key={grupo.id}
-          className="max-w-full truncate rounded-md border border-app-green bg-app-panel px-2 py-1 text-xs font-bold text-app-green"
-        >
-          {grupo.nome}
-        </span>
-      ))}
-    </div>
-  );
+  return <p className="mt-1 truncate text-xs font-semibold text-app-green">{groups.map((grupo) => grupo.nome_do_grupo).join(", ")}</p>;
 }
 
 function Info({ label, value }: { label: string; value: string }) {
