@@ -56,6 +56,7 @@ export function AnuncioForm() {
       });
 
       if (error) {
+        console.error("Erro ao enviar imagem para o Supabase Storage:", error);
         throw error;
       }
 
@@ -77,26 +78,43 @@ export function AnuncioForm() {
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      setMessage("Sessao expirada. Faca login novamente.");
+      if (userError) {
+        console.error("Erro ao buscar usuario autenticado:", userError);
+      }
+
+      setMessage(userError?.message ?? "Sessao expirada. Faca login novamente.");
       setLoading(false);
       return;
     }
 
     try {
-      const imageUrls = await uploadImages(user.id);
-      const { error } = await supabase.from("veiculos").insert({
-        user_id: user.id,
-        nome_anuncio: form.nome_anuncio,
-        quilometragem: form.quilometragem,
-        motor: form.motor,
-        valor: parseCurrencyInput(form.valor),
-        cor: form.cor,
-        texto_anuncio: form.texto_anuncio,
-        imagens: imageUrls,
-        status: "pendente"
+      const { error: profileError } = await supabase.from("profiles").upsert({
+        id: user.id,
+        email: user.email ?? ""
       });
 
+      if (profileError) {
+        console.error("Erro ao garantir profile antes de cadastrar anuncio:", profileError);
+        throw profileError;
+      }
+
+      const imageUrls = await uploadImages(user.id);
+      const { error } = await supabase
+        .from("veiculos")
+        .insert({
+          user_id: user.id,
+          nome_anuncio: form.nome_anuncio,
+          quilometragem: form.quilometragem,
+          motor: form.motor,
+          valor: parseCurrencyInput(form.valor),
+          cor: form.cor,
+          texto_anuncio: form.texto_anuncio,
+          imagens: imageUrls,
+          status: "pendente"
+        });
+
       if (error) {
+        console.error("Erro ao inserir anuncio na tabela veiculos:", error);
         throw error;
       }
 
@@ -105,7 +123,8 @@ export function AnuncioForm() {
       setPreviews([]);
       setMessage("Anuncio cadastrado com sucesso.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Nao foi possivel cadastrar o anuncio.");
+      console.error("Erro ao cadastrar anuncio:", error);
+      setMessage(getErrorMessage(error, "Nao foi possivel cadastrar o anuncio."));
     } finally {
       setLoading(false);
     }
@@ -217,4 +236,16 @@ export function AnuncioForm() {
       </form>
     </section>
   );
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  return fallback;
 }

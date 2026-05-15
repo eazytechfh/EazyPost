@@ -14,8 +14,8 @@ type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor
 };
 
 type AvailableGroupOption = IdDosGrupos & {
-  grupo_id: string;
-  grupo_nome: string;
+  grupo_id: string | null;
+  grupo_nome: string | null;
 };
 
 type LinkedGroupsByVehicle = Record<string, Grupo[]>;
@@ -43,7 +43,7 @@ export function VeiculosList() {
       supabase
         .from("id_dos_grupos")
         .select("*")
-        .eq("status", "Encontrado")
+        .ilike("status", "Encontrado")
         .order("nome_do_grupo", { ascending: true }),
       supabase.from("grupos").select("*").order("nome", { ascending: true }),
       supabase.from("anuncio_grupos").select("*")
@@ -88,7 +88,7 @@ export function VeiculosList() {
         supabase
           .from("id_dos_grupos")
           .select("*")
-          .eq("status", "Encontrado")
+          .ilike("status", "Encontrado")
           .order("nome_do_grupo", { ascending: true }),
         supabase.from("grupos").select("*").order("nome", { ascending: true }),
         supabase
@@ -330,12 +330,20 @@ export function VeiculosList() {
                     <input
                       type="checkbox"
                       className="mt-1 h-4 w-4 accent-app-green"
-                      checked={selectedGroupIds.includes(grupo.grupo_id)}
-                      onChange={() => toggleSelectedGroup(grupo.grupo_id)}
+                      checked={Boolean(grupo.grupo_id && selectedGroupIds.includes(grupo.grupo_id))}
+                      disabled={!grupo.grupo_id}
+                      onChange={() => {
+                        if (grupo.grupo_id) {
+                          toggleSelectedGroup(grupo.grupo_id);
+                        }
+                      }}
                     />
                     <span className="min-w-0">
                       <span className="block font-semibold text-app-white">{grupo.nome_do_grupo}</span>
                       <span className="mt-1 block break-all text-xs text-app-muted">{grupo.id_do_grupo ?? "-"}</span>
+                      {!grupo.grupo_id ? (
+                        <span className="mt-1 block text-xs text-red-400">Sem correspondencia na tabela grupos.</span>
+                      ) : null}
                     </span>
                   </label>
                 ))}
@@ -432,20 +440,14 @@ function VehicleCard({
 }
 
 function buildAvailableGroupOptions(foundGroups: IdDosGrupos[], grupos: Grupo[]) {
-  return foundGroups.flatMap((foundGroup) => {
+  return foundGroups.map((foundGroup) => {
     const matchingGroup = grupos.find((grupo) => normalizeGroupName(grupo.nome) === normalizeGroupName(foundGroup.nome_do_grupo));
 
-    if (!matchingGroup) {
-      return [];
-    }
-
-    return [
-      {
-        ...foundGroup,
-        grupo_id: matchingGroup.id,
-        grupo_nome: matchingGroup.nome
-      }
-    ];
+    return {
+      ...foundGroup,
+      grupo_id: matchingGroup?.id ?? null,
+      grupo_nome: matchingGroup?.nome ?? null
+    };
   });
 }
 
