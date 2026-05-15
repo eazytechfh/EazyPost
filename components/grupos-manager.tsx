@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
-import type { Grupo } from "@/types/database";
+import type { IdDosGrupos } from "@/types/database";
 import { SectionHeader } from "./section-header";
 
 const groupIdWebhookUrl = "https://n8n.eazy.tec.br/webhook/e326e099-ba8a-4db7-9a10-52b10910ecc5";
@@ -16,29 +16,119 @@ type GroupIdResult = {
 
 export function GruposManager() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const [grupos, setGrupos] = useState<Grupo[]>([]);
+  const [savedGroupIds, setSavedGroupIds] = useState<IdDosGrupos[]>([]);
   const [groupIdFields, setGroupIdFields] = useState([""]);
   const [groupIdResults, setGroupIdResults] = useState<GroupIdResult[]>([]);
   const [searchingGroupIds, setSearchingGroupIds] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
 
-  const loadGrupos = useCallback(async () => {
+  const loadSavedGroupIds = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from("grupos").select("*").order("created_at", { ascending: false });
+
+    const {
+      data: { user },
+      error: userError
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setMessage(userError?.message ?? "Sessao expirada. Faca login novamente.");
+      setSavedGroupIds([]);
+      setLoading(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("id_dos_grupos")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
 
     if (error) {
       setMessage(error.message);
     } else {
-      setGrupos(data ?? []);
+      setSavedGroupIds(data ?? []);
     }
 
     setLoading(false);
   }, [supabase]);
 
   useEffect(() => {
-    void loadGrupos();
-  }, [loadGrupos]);
+    void loadSavedGroupIds();
+  }, [loadSavedGroupIds]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function subscribeToSavedGroupIds() {
+      const {
+        data: { user }
+      } = await supabase.auth.getUser();
+
+      if (!user || !isActive) {
+        return;
+      }
+
+      const channel = supabase
+        .channel(`id_dos_grupos:${user.id}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "id_dos_grupos",
+            filter: `user_id=eq.${user.id}`
+          },
+          (payload) => {
+            if (payload.eventType === "INSERT") {
+              const newRow = payload.new as IdDosGrupos;
+              setSavedGroupIds((current) => [newRow, ...current.filter((group) => group.id !== newRow.id)]);
+              return;
+            }
+
+            if (payload.eventType === "UPDATE") {
+              const updatedRow = payload.new as IdDosGrupos;
+              setSavedGroupIds((current) =>
+                current
+                  .map((group) => (group.id === updatedRow.id ? updatedRow : group))
+                  .sort((first, second) => getCreatedAtTime(second.created_at) - getCreatedAtTime(first.created_at))
+              );
+              return;
+            }
+
+            if (payload.eventType === "DELETE") {
+              const deletedRow = payload.old as Pick<IdDosGrupos, "id">;
+              setSavedGroupIds((current) => current.filter((group) => group.id !== deletedRow.id));
+            }
+          }
+        )
+        .subscribe();
+
+      return channel;
+    }
+
+    let subscribedChannel: ReturnType<typeof supabase.channel> | null = null;
+
+    void subscribeToSavedGroupIds().then((channel) => {
+      if (!channel) {
+        return;
+      }
+
+      if (isActive) {
+        subscribedChannel = channel;
+      } else {
+        void supabase.removeChannel(channel);
+      }
+    });
+
+    return () => {
+      isActive = false;
+
+      if (subscribedChannel) {
+        void supabase.removeChannel(subscribedChannel);
+      }
+    };
+  }, [supabase]);
 
   function updateGroupIdField(index: number, value: string) {
     setGroupIdFields((current) => current.map((field, fieldIndex) => (fieldIndex === index ? value : field)));
@@ -116,15 +206,15 @@ export function GruposManager() {
     }
   }
 
-  async function deleteGrupo(id: string) {
-    const { error } = await supabase.from("grupos").delete().eq("id", id);
+  async function deleteSavedGroupId(id: string) {
+    const { error } = await supabase.from("id_dos_grupos").delete().eq("id", id);
 
     if (error) {
       setMessage(error.message);
       return;
     }
 
-    setGrupos((current) => current.filter((grupo) => grupo.id !== id));
+    setSavedGroupIds((current) => current.filter((group) => group.id !== id));
   }
 
   return (
@@ -207,24 +297,53 @@ export function GruposManager() {
 
       {loading ? (
         <div className="app-card p-6 text-sm text-app-muted">Carregando grupos...</div>
-      ) : grupos.length === 0 ? (
+      ) : savedGroupIds.length === 0 ? (
         <div className="app-card p-6 text-sm text-app-muted">Nenhum grupo cadastrado.</div>
       ) : (
-        <div className="grid gap-3">
-          {grupos.map((grupo) => (
-            <article key={grupo.id} className="app-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="font-bold text-app-white">{grupo.nome}</h2>
-                <a className="mt-1 block break-all text-sm text-app-muted hover:text-app-green" href={grupo.link} target="_blank">
-                  {grupo.link}
-                </a>
-              </div>
-              <button onClick={() => deleteGrupo(grupo.id)} className="app-button-secondary">
-                <Trash2 size={18} />
-                Excluir
-              </button>
-            </article>
-          ))}
+        <div className="app-card overflow-hidden">
+          <div className="hidden grid-cols-[1.2fr_1.3fr_auto_1fr_auto] gap-3 border-b border-app-border bg-app-panel px-4 py-3 text-xs font-bold uppercase text-app-muted lg:grid">
+            <span>Nome do Grupo</span>
+            <span>ID do Grupo</span>
+            <span>Status</span>
+            <span>Data de Cadastro</span>
+            <span className="text-right">Acoes</span>
+          </div>
+          <div className="divide-y divide-app-border">
+            {savedGroupIds.map((group) => {
+              const statusDisplay = getSavedGroupStatusDisplay(group.status);
+
+              return (
+                <article key={group.id} className="grid gap-3 px-4 py-4 text-sm lg:grid-cols-[1.2fr_1.3fr_auto_1fr_auto] lg:items-center">
+                  <div>
+                    <span className="block text-xs font-bold uppercase text-app-muted lg:hidden">Nome do Grupo</span>
+                    <span className="font-semibold text-app-white">{group.nome_do_grupo}</span>
+                  </div>
+                  <div>
+                    <span className="block text-xs font-bold uppercase text-app-muted lg:hidden">ID do Grupo</span>
+                    <span className="break-all text-app-muted">{group.id_do_grupo ?? "-"}</span>
+                  </div>
+                  <div>
+                    <span className="mb-1 block text-xs font-bold uppercase text-app-muted lg:hidden">Status</span>
+                    <span className={`w-fit rounded-md border px-2 py-1 text-xs font-bold ${statusDisplay.className}`}>
+                      {statusDisplay.label}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-xs font-bold uppercase text-app-muted lg:hidden">Data de Cadastro</span>
+                    <span className="text-app-muted">{formatDateTime(group.created_at)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => deleteSavedGroupId(group.id)}
+                    className="w-fit rounded-md border border-app-border bg-app-card p-2.5 text-app-white transition hover:border-red-500 hover:text-red-400 lg:justify-self-end"
+                    aria-label={`Excluir ${group.nome_do_grupo}`}
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </article>
+              );
+            })}
+          </div>
         </div>
       )}
     </section>
@@ -275,6 +394,51 @@ function getGroupIdStatusDisplay(status: GroupIdResult["status"]) {
     label: "Não encontrado",
     className: "border-red-500 bg-app-panel text-red-400"
   };
+}
+
+function getSavedGroupStatusDisplay(status: string) {
+  const normalizedStatus = status.trim().toLowerCase();
+
+  if (normalizedStatus === "ativo") {
+    return {
+      label: status,
+      className: "border-app-green bg-app-panel text-app-green"
+    };
+  }
+
+  if (normalizedStatus === "pendente") {
+    return {
+      label: status,
+      className: "border-yellow-500 bg-yellow-500/10 text-yellow-300"
+    };
+  }
+
+  return {
+    label: status || "-",
+    className: "border-app-border bg-app-panel text-app-muted"
+  };
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function getCreatedAtTime(value: string) {
+  const time = new Date(value).getTime();
+
+  return Number.isNaN(time) ? 0 : time;
 }
 
 function extractGroupIdItems(payload: unknown): Record<string, unknown>[] {
