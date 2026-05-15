@@ -120,6 +120,7 @@ drop policy if exists "veiculos_select_own" on public.veiculos;
 drop policy if exists "veiculos_select_authenticated" on public.veiculos;
 drop policy if exists "veiculos_insert_own" on public.veiculos;
 drop policy if exists "veiculos_update_own" on public.veiculos;
+drop policy if exists "veiculos_update_authenticated" on public.veiculos;
 drop policy if exists "veiculos_delete_own" on public.veiculos;
 drop policy if exists "veiculos_delete_authenticated" on public.veiculos;
 
@@ -131,10 +132,10 @@ create policy "veiculos_insert_own"
   on public.veiculos for insert
   with check (auth.uid() = user_id);
 
-create policy "veiculos_update_own"
+create policy "veiculos_update_authenticated"
   on public.veiculos for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+  using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');
 
 create policy "veiculos_delete_authenticated"
   on public.veiculos for delete
@@ -191,7 +192,9 @@ create policy "id_dos_grupos_delete_authenticated"
 drop policy if exists "anuncio_grupos_select_own" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_select_authenticated" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_insert_own" on public.anuncio_grupos;
+drop policy if exists "anuncio_grupos_insert_authenticated" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_update_own" on public.anuncio_grupos;
+drop policy if exists "anuncio_grupos_update_authenticated" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_delete_own" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_delete_authenticated" on public.anuncio_grupos;
 
@@ -199,10 +202,10 @@ create policy "anuncio_grupos_select_authenticated"
   on public.anuncio_grupos for select
   using (auth.role() = 'authenticated');
 
-create policy "anuncio_grupos_insert_own"
+create policy "anuncio_grupos_insert_authenticated"
   on public.anuncio_grupos for insert
   with check (
-    auth.uid() = user_id
+    auth.role() = 'authenticated'
     and exists (
       select 1 from public.veiculos
       where veiculos.id = anuncio_grupos.veiculo_id
@@ -213,10 +216,10 @@ create policy "anuncio_grupos_insert_own"
     )
   );
 
-create policy "anuncio_grupos_update_own"
+create policy "anuncio_grupos_update_authenticated"
   on public.anuncio_grupos for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+  using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');
 
 create policy "anuncio_grupos_delete_authenticated"
   on public.anuncio_grupos for delete

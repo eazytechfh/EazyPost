@@ -181,6 +181,7 @@ export function VeiculosList() {
     setSavingGroups(true);
     setMessage("");
 
+    const vehicleId = groupVehicle.id;
     const selectedSet = new Set(selectedGroupIds);
     const currentSet = new Set(currentVehicleLinks.map((link) => link.grupo_id));
     const linksToDelete = currentVehicleLinks.filter((link) => !selectedSet.has(link.grupo_id));
@@ -199,7 +200,7 @@ export function VeiculosList() {
       if (groupIdsToInsert.length > 0) {
         const { error } = await supabase.from("anuncio_grupos").insert(
           groupIdsToInsert.map((groupId) => ({
-            veiculo_id: groupVehicle.id,
+            veiculo_id: vehicleId,
             grupo_id: groupId,
             user_id: user.id
           }))
@@ -216,7 +217,7 @@ export function VeiculosList() {
       setMessage("Grupos do anuncio atualizados.");
       await loadData();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Nao foi possivel atualizar os grupos do anuncio.");
+      setMessage(getErrorMessage(error, "Nao foi possivel atualizar os grupos do anuncio."));
     } finally {
       setSavingGroups(false);
     }
@@ -447,18 +448,15 @@ function buildLinkedGroupsMap(links: AnuncioGrupo[], grupos: IdDosGrupos[]) {
 
 function StatusBadge({ status }: { status: string }) {
   const normalizedStatus = status.toLowerCase();
-  const isActive = normalizedStatus === "ativo";
-  const label = isActive ? "Ativo" : "Pendente";
+  const isProgrammed = normalizedStatus === "ativo" || normalizedStatus === "programado";
+
+  if (!isProgrammed) {
+    return null;
+  }
 
   return (
-    <span
-      className={`absolute left-3 top-3 rounded-md border px-2 py-1 text-xs font-bold ${
-        isActive
-          ? "border-app-green bg-app-panel text-app-green"
-          : "border-[#f59e0b] bg-app-panel text-[#f59e0b]"
-      }`}
-    >
-      {label}
+    <span className="absolute left-3 top-3 rounded-md border border-app-green bg-app-panel px-2 py-1 text-xs font-bold text-app-green">
+      Ativo
     </span>
   );
 }
@@ -533,4 +531,16 @@ function Modal({
       </div>
     </div>
   );
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  return fallback;
 }
