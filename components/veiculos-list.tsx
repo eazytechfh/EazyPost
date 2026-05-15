@@ -5,7 +5,7 @@ import Image from "next/image";
 import { CalendarClock, Check, Edit3, Loader2, MoreVertical, Trash2, Users, X } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
-import type { AnuncioGrupo, IdDosGrupos, Veiculo } from "@/types/database";
+import type { AnuncioGrupo, Grupo, IdDosGrupos, Veiculo } from "@/types/database";
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
 
@@ -13,12 +13,17 @@ type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor
   valor: string;
 };
 
-type LinkedGroupsByVehicle = Record<string, IdDosGrupos[]>;
+type AvailableGroupOption = IdDosGrupos & {
+  grupo_id: string;
+  grupo_nome: string;
+};
+
+type LinkedGroupsByVehicle = Record<string, Grupo[]>;
 
 export function VeiculosList() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
-  const [availableGroups, setAvailableGroups] = useState<IdDosGrupos[]>([]);
+  const [availableGroups, setAvailableGroups] = useState<AvailableGroupOption[]>([]);
   const [linkedGroupsByVehicle, setLinkedGroupsByVehicle] = useState<LinkedGroupsByVehicle>({});
   const [currentVehicleLinks, setCurrentVehicleLinks] = useState<AnuncioGrupo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,13 +38,14 @@ export function VeiculosList() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [veiculosResult, gruposResult, linksResult] = await Promise.all([
+    const [veiculosResult, foundGroupsResult, gruposResult, linksResult] = await Promise.all([
       supabase.from("veiculos").select("*").order("created_at", { ascending: false }),
       supabase
         .from("id_dos_grupos")
         .select("*")
         .eq("status", "Encontrado")
         .order("nome_do_grupo", { ascending: true }),
+      supabase.from("grupos").select("*").order("nome", { ascending: true }),
       supabase.from("anuncio_grupos").select("*")
     ]);
 
@@ -49,10 +55,10 @@ export function VeiculosList() {
       setVeiculos(veiculosResult.data ?? []);
     }
 
-    if (gruposResult.error) {
-      setMessage(gruposResult.error.message);
+    if (foundGroupsResult.error || gruposResult.error) {
+      setMessage(foundGroupsResult.error?.message ?? gruposResult.error?.message ?? "Nao foi possivel carregar os grupos.");
     } else {
-      setAvailableGroups(gruposResult.data ?? []);
+      setAvailableGroups(buildAvailableGroupOptions(foundGroupsResult.data ?? [], gruposResult.data ?? []));
     }
 
     if (linksResult.error) {
@@ -78,20 +84,21 @@ export function VeiculosList() {
     const vehicleId = groupVehicle.id;
 
     async function loadVehicleGroups() {
-      const [groupsResult, linksResult] = await Promise.all([
+      const [foundGroupsResult, gruposResult, linksResult] = await Promise.all([
         supabase
           .from("id_dos_grupos")
           .select("*")
           .eq("status", "Encontrado")
           .order("nome_do_grupo", { ascending: true }),
+        supabase.from("grupos").select("*").order("nome", { ascending: true }),
         supabase
           .from("anuncio_grupos")
           .select("*")
           .eq("veiculo_id", vehicleId)
       ]);
 
-      if (groupsResult.error || linksResult.error) {
-        setMessage(groupsResult.error?.message ?? linksResult.error?.message ?? "Nao foi possivel carregar os grupos.");
+      if (foundGroupsResult.error || gruposResult.error || linksResult.error) {
+        setMessage(foundGroupsResult.error?.message ?? gruposResult.error?.message ?? linksResult.error?.message ?? "Nao foi possivel carregar os grupos.");
         setAvailableGroups([]);
         setCurrentVehicleLinks([]);
         setSelectedGroupIds([]);
@@ -99,7 +106,7 @@ export function VeiculosList() {
       }
 
       const links = linksResult.data ?? [];
-      setAvailableGroups(groupsResult.data ?? []);
+      setAvailableGroups(buildAvailableGroupOptions(foundGroupsResult.data ?? [], gruposResult.data ?? []));
       setCurrentVehicleLinks(links);
       setSelectedGroupIds(links.map((link) => link.grupo_id));
     }
@@ -239,7 +246,7 @@ export function VeiculosList() {
     }
 
     const linkedGroups = linkedGroupsByVehicle[veiculo.id] ?? [];
-    const groupNames = linkedGroups.map((grupo) => grupo.nome_do_grupo).join(", ");
+    const groupNames = linkedGroups.map((grupo) => grupo.nome).join(", ");
 
     if (groupNames) {
       setProgramModal(`Anuncio programado! Em breve ele sera iniciado, acompanhe no grupo: ${groupNames}.`);
@@ -323,8 +330,8 @@ export function VeiculosList() {
                     <input
                       type="checkbox"
                       className="mt-1 h-4 w-4 accent-app-green"
-                      checked={selectedGroupIds.includes(grupo.id)}
-                      onChange={() => toggleSelectedGroup(grupo.id)}
+                      checked={selectedGroupIds.includes(grupo.grupo_id)}
+                      onChange={() => toggleSelectedGroup(grupo.grupo_id)}
                     />
                     <span className="min-w-0">
                       <span className="block font-semibold text-app-white">{grupo.nome_do_grupo}</span>
@@ -369,7 +376,7 @@ function VehicleCard({
   onProgram
 }: {
   veiculo: Veiculo;
-  linkedGroups: IdDosGrupos[];
+  linkedGroups: Grupo[];
   menuOpen: boolean;
   onToggleMenu: () => void;
   onEdit: () => void;
@@ -424,7 +431,25 @@ function VehicleCard({
   );
 }
 
-function buildLinkedGroupsMap(links: AnuncioGrupo[], grupos: IdDosGrupos[]) {
+function buildAvailableGroupOptions(foundGroups: IdDosGrupos[], grupos: Grupo[]) {
+  return foundGroups.flatMap((foundGroup) => {
+    const matchingGroup = grupos.find((grupo) => normalizeGroupName(grupo.nome) === normalizeGroupName(foundGroup.nome_do_grupo));
+
+    if (!matchingGroup) {
+      return [];
+    }
+
+    return [
+      {
+        ...foundGroup,
+        grupo_id: matchingGroup.id,
+        grupo_nome: matchingGroup.nome
+      }
+    ];
+  });
+}
+
+function buildLinkedGroupsMap(links: AnuncioGrupo[], grupos: Grupo[]) {
   const groupsById = new Map(grupos.map((grupo) => [grupo.id, grupo]));
   const linkedGroupsByVehicle: LinkedGroupsByVehicle = {};
 
@@ -461,12 +486,16 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function LinkedGroups({ groups }: { groups: IdDosGrupos[] }) {
+function LinkedGroups({ groups }: { groups: Grupo[] }) {
   if (groups.length === 0) {
     return <p className="mt-1 text-xs text-app-muted">Nenhum grupo vinculado</p>;
   }
 
-  return <p className="mt-1 truncate text-xs font-semibold text-app-green">{groups.map((grupo) => grupo.nome_do_grupo).join(", ")}</p>;
+  return <p className="mt-1 truncate text-xs font-semibold text-app-green">{groups.map((grupo) => grupo.nome).join(", ")}</p>;
+}
+
+function normalizeGroupName(value: string) {
+  return value.trim().toLowerCase();
 }
 
 function Info({ label, value }: { label: string; value: string }) {

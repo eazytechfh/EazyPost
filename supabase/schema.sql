@@ -41,7 +41,7 @@ create table if not exists public.id_dos_grupos (
 create table if not exists public.anuncio_grupos (
   id uuid primary key default gen_random_uuid(),
   veiculo_id uuid not null references public.veiculos(id) on delete cascade,
-  grupo_id uuid not null references public.id_dos_grupos(id) on delete cascade,
+  grupo_id uuid not null references public.grupos(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
   programado boolean not null default false,
   programado_em timestamp with time zone null,
@@ -53,7 +53,7 @@ alter table public.anuncio_grupos
 
 alter table public.anuncio_grupos
   add constraint anuncio_grupos_grupo_id_fkey
-  foreign key (grupo_id) references public.id_dos_grupos(id) on delete cascade;
+  foreign key (grupo_id) references public.grupos(id) on delete cascade;
 
 alter table public.profiles enable row level security;
 alter table public.veiculos enable row level security;
@@ -211,8 +211,8 @@ create policy "anuncio_grupos_insert_authenticated"
       where veiculos.id = anuncio_grupos.veiculo_id
     )
     and exists (
-      select 1 from public.id_dos_grupos
-      where id_dos_grupos.id = anuncio_grupos.grupo_id
+      select 1 from public.grupos
+      where grupos.id = anuncio_grupos.grupo_id
     )
   );
 
