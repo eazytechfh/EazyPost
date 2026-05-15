@@ -19,14 +19,6 @@ export type Veiculo = {
   updated_at: string;
 } & Record<string, unknown>;
 
-export type Grupo = {
-  id: string;
-  user_id: string;
-  nome: string;
-  link: string;
-  created_at: string;
-} & Record<string, unknown>;
-
 export type IdDosGrupos = {
   id: string;
   user_id: string;
@@ -68,15 +60,6 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<Omit<Veiculo, "id" | "user_id" | "created_at">>;
-        Relationships: [];
-      };
-      grupos: {
-        Row: Grupo;
-        Insert: Omit<Grupo, "id" | "created_at"> & {
-          id?: string;
-          created_at?: string;
-        };
-        Update: Partial<Omit<Grupo, "id" | "user_id" | "created_at">>;
         Relationships: [];
       };
       id_dos_grupos: {
