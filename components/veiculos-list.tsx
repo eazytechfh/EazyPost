@@ -69,6 +69,44 @@ export function VeiculosList() {
   }, [loadData]);
 
   useEffect(() => {
+    const channel = supabase
+      .channel("veiculos")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "veiculos"
+        },
+        (payload) => {
+          if (payload.eventType === "INSERT") {
+            const newVehicle = payload.new as Veiculo;
+            setVeiculos((current) => [newVehicle, ...current.filter((veiculo) => veiculo.id !== newVehicle.id)]);
+            return;
+          }
+
+          if (payload.eventType === "UPDATE") {
+            const updatedVehicle = payload.new as Veiculo;
+            setVeiculos((current) =>
+              current.map((veiculo) => (veiculo.id === updatedVehicle.id ? updatedVehicle : veiculo))
+            );
+            return;
+          }
+
+          if (payload.eventType === "DELETE") {
+            const deletedVehicle = payload.old as Pick<Veiculo, "id">;
+            setVeiculos((current) => current.filter((veiculo) => veiculo.id !== deletedVehicle.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase]);
+
+  useEffect(() => {
     if (!groupVehicle) {
       setCurrentVehicleLinks([]);
       setSelectedGroupIds([]);
@@ -447,18 +485,36 @@ function buildLinkedGroupsMap(links: AnuncioGrupo[], groupIds: IdDosGrupos[]) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const normalizedStatus = status.toLowerCase();
-  const isProgrammed = normalizedStatus === "ativo" || normalizedStatus === "programado";
-
-  if (!isProgrammed) {
-    return null;
-  }
+  const statusDisplay = getVehicleStatusDisplay(status);
 
   return (
-    <span className="absolute left-3 top-3 rounded-md border border-app-green bg-app-panel px-2 py-1 text-xs font-bold text-app-green">
-      Ativo
+    <span className={`absolute left-3 top-3 rounded-md border bg-app-panel px-2 py-1 text-xs font-bold ${statusDisplay.className}`}>
+      {statusDisplay.label}
     </span>
   );
+}
+
+function getVehicleStatusDisplay(status: string) {
+  const normalizedStatus = status.trim().toLowerCase();
+
+  if (normalizedStatus === "ativo") {
+    return {
+      label: "Ativo",
+      className: "border-blue-500 text-blue-400"
+    };
+  }
+
+  if (normalizedStatus === "enviado") {
+    return {
+      label: "Enviado",
+      className: "border-app-green text-app-green"
+    };
+  }
+
+  return {
+    label: "Pendente",
+    className: "border-yellow-500 text-yellow-300"
+  };
 }
 
 function LinkedGroups({ groups }: { groups: IdDosGrupos[] }) {
