@@ -11,7 +11,7 @@ const groupIdWebhookUrl = "https://n8n.eazy.tec.br/webhook/e326e099-ba8a-4db7-9a
 type GroupIdResult = {
   nome_do_grupo: string;
   id_do_grupo: string | null;
-  status: "ativo" | "não encontrado";
+  status: "buscando" | "ativo" | "nao encontrado";
 };
 
 export function GruposManager() {
@@ -62,6 +62,13 @@ export function GruposManager() {
 
     setSearchingGroupIds(true);
     setMessage("");
+    setGroupIdResults(
+      groupNames.map((name) => ({
+        nome_do_grupo: name,
+        id_do_grupo: null,
+        status: "buscando"
+      }))
+    );
 
     const {
       data: { user }
@@ -69,6 +76,7 @@ export function GruposManager() {
 
     if (!user) {
       setMessage("Sessao expirada. Faca login novamente.");
+      setGroupIdResults([]);
       setSearchingGroupIds(false);
       return;
     }
@@ -92,22 +100,16 @@ export function GruposManager() {
       const payload = (await response.json()) as unknown;
       const results = normalizeGroupIdResults(payload, groupNames);
 
-      const { error } = await supabase.from("id_dos_grupos").insert(
-        results.map((result) => ({
-          user_id: user.id,
-          nome_do_grupo: result.nome_do_grupo,
-          id_do_grupo: result.id_do_grupo ?? "",
-          status: result.status
-        }))
-      );
-
-      if (error) {
-        throw error;
-      }
-
       setGroupIdResults(results);
       setMessage("Busca de IDs concluida.");
     } catch (error) {
+      setGroupIdResults(
+        groupNames.map((name) => ({
+          nome_do_grupo: name,
+          id_do_grupo: null,
+          status: "nao encontrado"
+        }))
+      );
       setMessage(error instanceof Error ? error.message : "Nao foi possivel procurar os IDs dos grupos.");
     } finally {
       setSearchingGroupIds(false);
@@ -183,21 +185,15 @@ export function GruposManager() {
               <span>Status</span>
             </div>
             <div className="divide-y divide-app-border">
-              {groupIdResults.map((result) => {
-                const found = result.status === "ativo";
+              {groupIdResults.map((result, index) => {
+                const statusDisplay = getGroupIdStatusDisplay(result.status);
 
                 return (
-                  <div key={`${result.nome_do_grupo}-${result.id_do_grupo ?? "empty"}`} className="grid gap-2 px-3 py-3 text-sm sm:grid-cols-[1.4fr_1.2fr_auto] sm:items-center">
+                  <div key={`${result.nome_do_grupo}-${result.id_do_grupo ?? "empty"}-${index}`} className="grid gap-2 px-3 py-3 text-sm sm:grid-cols-[1.4fr_1.2fr_auto] sm:items-center">
                     <span className="font-semibold text-app-white">{result.nome_do_grupo}</span>
                     <span className="break-all text-app-muted">{result.id_do_grupo ?? "-"}</span>
-                    <span
-                      className={`w-fit rounded-md border px-2 py-1 text-xs font-bold ${
-                        found
-                          ? "border-app-green bg-app-panel text-app-green"
-                          : "border-red-500 bg-app-panel text-red-400"
-                      }`}
-                    >
-                      {found ? "Encontrado" : "Não encontrado"}
+                    <span className={`w-fit rounded-md border px-2 py-1 text-xs font-bold ${statusDisplay.className}`}>
+                      {statusDisplay.label}
                     </span>
                   </div>
                 );
@@ -242,7 +238,7 @@ function normalizeGroupIdResults(payload: unknown, requestedNames: string[]): Gr
     return requestedNames.map((name) => ({
       nome_do_grupo: name,
       id_do_grupo: null,
-      status: "não encontrado"
+      status: "nao encontrado"
     }));
   }
 
@@ -255,9 +251,30 @@ function normalizeGroupIdResults(payload: unknown, requestedNames: string[]): Gr
     return {
       nome_do_grupo: getStringValue(item, ["nome_do_grupo", "nome", "grupo", "name"]) || name,
       id_do_grupo: id || null,
-      status: found ? "ativo" : "não encontrado"
+      status: found ? "ativo" : "nao encontrado"
     };
   });
+}
+
+function getGroupIdStatusDisplay(status: GroupIdResult["status"]) {
+  if (status === "buscando") {
+    return {
+      label: "Buscando...",
+      className: "border-yellow-500 bg-yellow-500/10 text-yellow-300"
+    };
+  }
+
+  if (status === "ativo") {
+    return {
+      label: "Encontrado",
+      className: "border-app-green bg-app-panel text-app-green"
+    };
+  }
+
+  return {
+    label: "Não encontrado",
+    className: "border-red-500 bg-app-panel text-red-400"
+  };
 }
 
 function extractGroupIdItems(payload: unknown): Record<string, unknown>[] {
