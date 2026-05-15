@@ -41,7 +41,6 @@ export function GruposManager() {
     const { data, error } = await supabase
       .from("id_dos_grupos")
       .select("*")
-      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -70,14 +69,13 @@ export function GruposManager() {
       }
 
       const channel = supabase
-        .channel(`id_dos_grupos:${user.id}`)
+        .channel("id_dos_grupos")
         .on(
           "postgres_changes",
           {
             event: "*",
             schema: "public",
-            table: "id_dos_grupos",
-            filter: `user_id=eq.${user.id}`
+            table: "id_dos_grupos"
           },
           (payload) => {
             if (payload.eventType === "INSERT") {
@@ -143,7 +141,7 @@ export function GruposManager() {
   }
 
   async function searchGroupIds() {
-    const groupNames = groupIdFields.map((field) => field.trim()).filter(Boolean);
+    const groupNames = groupIdFields.filter((field) => field.trim().length > 0);
 
     if (groupNames.length === 0) {
       setMessage("Informe pelo menos um nome de grupo para procurar.");
@@ -368,7 +366,7 @@ function normalizeGroupIdResults(payload: unknown, requestedNames: string[]): Gr
     const found = Boolean(id) && !status.toLowerCase().includes("nao") && !status.toLowerCase().includes("não");
 
     return {
-      nome_do_grupo: getStringValue(item, ["nome_do_grupo", "nome", "grupo", "name"]) || name,
+      nome_do_grupo: name,
       id_do_grupo: id || null,
       status: found ? "ativo" : "nao encontrado"
     };
@@ -399,7 +397,7 @@ function getGroupIdStatusDisplay(status: GroupIdResult["status"]) {
 function getSavedGroupStatusDisplay(status: string) {
   const normalizedStatus = status.trim().toLowerCase();
 
-  if (normalizedStatus === "ativo") {
+  if (normalizedStatus === "ativo" || normalizedStatus === "encontrado") {
     return {
       label: status,
       className: "border-app-green bg-app-panel text-app-green"

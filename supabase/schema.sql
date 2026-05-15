@@ -29,6 +29,15 @@ create table if not exists public.grupos (
   created_at timestamp with time zone default now()
 );
 
+create table if not exists public.id_dos_grupos (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete cascade,
+  nome_do_grupo text not null,
+  id_do_grupo text null,
+  status text not null default 'pendente',
+  created_at timestamp with time zone default now()
+);
+
 create table if not exists public.anuncio_grupos (
   id uuid primary key default gen_random_uuid(),
   veiculo_id uuid not null references public.veiculos(id) on delete cascade,
@@ -42,6 +51,7 @@ create table if not exists public.anuncio_grupos (
 alter table public.profiles enable row level security;
 alter table public.veiculos enable row level security;
 alter table public.grupos enable row level security;
+alter table public.id_dos_grupos enable row level security;
 alter table public.anuncio_grupos enable row level security;
 
 alter table public.veiculos alter column status set default 'pendente';
@@ -100,13 +110,14 @@ create policy "profiles_update_own"
   with check (auth.uid() = id);
 
 drop policy if exists "veiculos_select_own" on public.veiculos;
+drop policy if exists "veiculos_select_authenticated" on public.veiculos;
 drop policy if exists "veiculos_insert_own" on public.veiculos;
 drop policy if exists "veiculos_update_own" on public.veiculos;
 drop policy if exists "veiculos_delete_own" on public.veiculos;
 
-create policy "veiculos_select_own"
+create policy "veiculos_select_authenticated"
   on public.veiculos for select
-  using (auth.uid() = user_id);
+  using (auth.role() = 'authenticated');
 
 create policy "veiculos_insert_own"
   on public.veiculos for insert
@@ -122,13 +133,14 @@ create policy "veiculos_delete_own"
   using (auth.uid() = user_id);
 
 drop policy if exists "grupos_select_own" on public.grupos;
+drop policy if exists "grupos_select_authenticated" on public.grupos;
 drop policy if exists "grupos_insert_own" on public.grupos;
 drop policy if exists "grupos_update_own" on public.grupos;
 drop policy if exists "grupos_delete_own" on public.grupos;
 
-create policy "grupos_select_own"
+create policy "grupos_select_authenticated"
   on public.grupos for select
-  using (auth.uid() = user_id);
+  using (auth.role() = 'authenticated');
 
 create policy "grupos_insert_own"
   on public.grupos for insert
@@ -143,14 +155,39 @@ create policy "grupos_delete_own"
   on public.grupos for delete
   using (auth.uid() = user_id);
 
+drop policy if exists "id_dos_grupos_select_own" on public.id_dos_grupos;
+drop policy if exists "id_dos_grupos_select_authenticated" on public.id_dos_grupos;
+drop policy if exists "id_dos_grupos_insert_own" on public.id_dos_grupos;
+drop policy if exists "id_dos_grupos_update_own" on public.id_dos_grupos;
+drop policy if exists "id_dos_grupos_delete_own" on public.id_dos_grupos;
+drop policy if exists "id_dos_grupos_delete_authenticated" on public.id_dos_grupos;
+
+create policy "id_dos_grupos_select_authenticated"
+  on public.id_dos_grupos for select
+  using (auth.role() = 'authenticated');
+
+create policy "id_dos_grupos_insert_own"
+  on public.id_dos_grupos for insert
+  with check (auth.uid() = user_id);
+
+create policy "id_dos_grupos_update_own"
+  on public.id_dos_grupos for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "id_dos_grupos_delete_authenticated"
+  on public.id_dos_grupos for delete
+  using (auth.role() = 'authenticated');
+
 drop policy if exists "anuncio_grupos_select_own" on public.anuncio_grupos;
+drop policy if exists "anuncio_grupos_select_authenticated" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_insert_own" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_update_own" on public.anuncio_grupos;
 drop policy if exists "anuncio_grupos_delete_own" on public.anuncio_grupos;
 
-create policy "anuncio_grupos_select_own"
+create policy "anuncio_grupos_select_authenticated"
   on public.anuncio_grupos for select
-  using (auth.uid() = user_id);
+  using (auth.role() = 'authenticated');
 
 create policy "anuncio_grupos_insert_own"
   on public.anuncio_grupos for insert
