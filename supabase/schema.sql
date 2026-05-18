@@ -14,12 +14,17 @@ create table if not exists public.veiculos (
   motor text not null,
   valor numeric not null,
   cor text not null,
+  fipe text not null default '',
+  placa text not null default '',
   texto_anuncio text not null,
   imagens text[] not null default '{}',
   status text not null default 'pendente',
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now()
 );
+
+alter table public.veiculos add column if not exists fipe text not null default '';
+alter table public.veiculos add column if not exists placa text not null default '';
 
 create table if not exists public.id_dos_grupos (
   id uuid primary key default gen_random_uuid(),

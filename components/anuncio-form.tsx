@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { ImagePlus, Loader2, Save } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
@@ -14,8 +14,49 @@ type FormState = {
   motor: string;
   valor: string;
   cor: string;
+  fipe: string;
+  placa: string;
+  ano: string;
   texto_anuncio: string;
 };
+
+function buildAnuncioTemplate(fields: {
+  nome_anuncio: string;
+  fipe: string;
+  valor: string;
+  ano: string;
+  quilometragem: string;
+  placa: string;
+}) {
+  const nome = fields.nome_anuncio || "[Nome do Anúncio]";
+  const fipe = fields.fipe || "[FIPE]";
+  const valorNum = parseCurrencyInput(fields.valor);
+  const valorDisplay = fields.valor
+    ? new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2 }).format(valorNum)
+    : "[Valor]";
+  const ano = fields.ano || "[ANO]";
+  const km = fields.quilometragem || "[KM]";
+  const placa = fields.placa ? fields.placa.toUpperCase() : "[PLACA]";
+
+  return `${nome}
+
+💸 FIPE: ${fipe}
+💰 VALOR: ${valorDisplay}
+
+ANO: ${ano} | KM: ${km}
+CÂMBIO:
+PNEUS: BONS
+PERÍCIA: APROVA ✅
+PLACA: XXX-${placa}
+
+SEM LEILÃO | SEM SINISTRO ✅
+
+PAGAMENTO NO CARTÃO DE CRÉDITO EM ATÉ 24X, FINANCIAMENTO EM TODOS OS BANCOS, SEM ENTRADA, SUJEITO À ANÁLISE DE CRÉDITO. CONSULTE NOSSOS VENDEDORES
+
+VEÍCULOS PARA FORA DO ESTADO DO PARANÁ: ADICIONAL DE 1% DO VALOR DA VENDA PARA NF
+
+📍 CURITIBA`;
+}
 
 const initialState: FormState = {
   nome_anuncio: "",
@@ -23,7 +64,10 @@ const initialState: FormState = {
   motor: "",
   valor: "",
   cor: "",
-  texto_anuncio: ""
+  fipe: "",
+  placa: "",
+  ano: "",
+  texto_anuncio: buildAnuncioTemplate({ nome_anuncio: "", fipe: "", valor: "", ano: "", quilometragem: "", placa: "" })
 };
 
 export function AnuncioForm() {
@@ -34,8 +78,28 @@ export function AnuncioForm() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    setForm(current => ({
+      ...current,
+      texto_anuncio: buildAnuncioTemplate({
+        nome_anuncio: current.nome_anuncio,
+        fipe: current.fipe,
+        valor: current.valor,
+        ano: current.ano,
+        quilometragem: current.quilometragem,
+        placa: current.placa
+      })
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa]);
+
   function updateField(field: keyof FormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function handlePlacaChange(value: string) {
+    const sanitized = value.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase();
+    updateField("placa", sanitized);
   }
 
   function handleFiles(nextFiles: FileList | null) {
@@ -108,6 +172,8 @@ export function AnuncioForm() {
           motor: form.motor,
           valor: parseCurrencyInput(form.valor),
           cor: form.cor,
+          fipe: form.fipe,
+          placa: `XXX-${form.placa}`,
           texto_anuncio: form.texto_anuncio,
           imagens: imageUrls,
           status: "pendente"
@@ -173,6 +239,18 @@ export function AnuncioForm() {
           </label>
 
           <label className="space-y-2">
+            <span className="app-label">Ano</span>
+            <input
+              className="app-input"
+              value={form.ano}
+              onChange={(event) => updateField("ano", event.target.value)}
+              placeholder="2019"
+              maxLength={4}
+              required
+            />
+          </label>
+
+          <label className="space-y-2">
             <span className="app-label">Valor</span>
             <input
               className="app-input"
@@ -184,7 +262,18 @@ export function AnuncioForm() {
             />
           </label>
 
-          <label className="space-y-2 md:col-span-2">
+          <label className="space-y-2">
+            <span className="app-label">FIPE</span>
+            <input
+              className="app-input"
+              value={form.fipe}
+              onChange={(event) => updateField("fipe", event.target.value)}
+              placeholder="R$ 120.000,00"
+              required
+            />
+          </label>
+
+          <label className="space-y-2">
             <span className="app-label">Cor</span>
             <input
               className="app-input"
@@ -193,6 +282,23 @@ export function AnuncioForm() {
               placeholder="Prata"
               required
             />
+          </label>
+
+          <label className="space-y-2">
+            <span className="app-label">Placa</span>
+            <div className="flex">
+              <span className="flex items-center rounded-l-md border border-r-0 border-app-border bg-app-panel px-3 text-sm text-app-muted select-none">
+                XXX-
+              </span>
+              <input
+                className="app-input rounded-l-none"
+                value={form.placa}
+                onChange={(event) => handlePlacaChange(event.target.value)}
+                placeholder="0000"
+                maxLength={4}
+                required
+              />
+            </div>
           </label>
         </div>
 
