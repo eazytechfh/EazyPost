@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo } from "react";
-import { Car, ListChecks, LogOut, MessageCircle, PlusCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Car, ListChecks, LogOut, MessageCircle, PlusCircle, Timer } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
+
+const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
+const TOTAL_SECONDS = 60 * 60;
 
 const navItems = [
   {
@@ -23,6 +26,99 @@ const navItems = [
     icon: MessageCircle
   }
 ];
+
+function useCountdown() {
+  const [seconds, setSeconds] = useState(TOTAL_SECONDS);
+  const [firing, setFiring] = useState(false);
+  const firingRef = useRef(false);
+
+  useEffect(() => {
+    if (seconds > 0) {
+      const timer = setTimeout(() => setSeconds((s) => s - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+
+    if (firingRef.current) return;
+    firingRef.current = true;
+    setFiring(true);
+
+    fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ disparar: "ok" })
+    })
+      .catch((err) => console.error("Erro ao disparar webhook:", err))
+      .finally(() => {
+        firingRef.current = false;
+        setFiring(false);
+        setSeconds(TOTAL_SECONDS);
+      });
+  }, [seconds]);
+
+  const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const secs = String(seconds % 60).padStart(2, "0");
+  const display = `${minutes}:${secs}`;
+
+  const colorClass =
+    seconds > 600
+      ? "text-app-green"
+      : seconds > 300
+      ? "text-yellow-400"
+      : seconds > 60
+      ? "text-orange-400"
+      : "text-red-400";
+
+  const progress = seconds / TOTAL_SECONDS;
+
+  return { display, colorClass, firing, progress, seconds };
+}
+
+function CountdownTimer({ compact = false }: { compact?: boolean }) {
+  const { display, colorClass, firing, progress } = useCountdown();
+
+  const circumference = 2 * Math.PI * 18;
+  const dashOffset = circumference * (1 - progress);
+
+  if (compact) {
+    return (
+      <div className={`flex items-center gap-1.5 text-sm font-bold tabular-nums ${colorClass}`}>
+        <Timer size={14} />
+        <span>{display}</span>
+        {firing ? <span className="text-xs text-app-muted">●</span> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-0 my-4 rounded-md border border-app-border bg-app-card p-3">
+      <div className="flex items-center gap-3">
+        <div className="relative shrink-0">
+          <svg width="44" height="44" viewBox="0 0 44 44" className="-rotate-90">
+            <circle cx="22" cy="22" r="18" fill="none" stroke="currentColor" strokeWidth="3" className="text-app-border" />
+            <circle
+              cx="22"
+              cy="22"
+              r="18"
+              fill="none"
+              strokeWidth="3"
+              strokeDasharray={circumference}
+              strokeDashoffset={dashOffset}
+              strokeLinecap="round"
+              className={`transition-all duration-1000 ${colorClass}`}
+            />
+          </svg>
+          <Timer size={14} className={`absolute inset-0 m-auto ${colorClass}`} />
+        </div>
+        <div className="min-w-0">
+          <p className={`text-xl font-bold tabular-nums leading-none ${colorClass}`}>
+            {firing ? "Disparando..." : display}
+          </p>
+          <p className="mt-1 text-xs text-app-muted">Próximo disparo</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function DashboardShell({
   children,
@@ -54,7 +150,9 @@ export function DashboardShell({
           </div>
         </Link>
 
-        <nav className="mt-10 space-y-2">
+        <CountdownTimer />
+
+        <nav className="space-y-2">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;
@@ -87,9 +185,12 @@ export function DashboardShell({
           <Link href="/dashboard/anuncio" className="text-lg font-bold">
             Eazy<span className="text-app-green">Post</span>
           </Link>
-          <button onClick={handleLogout} className="rounded-md border border-app-border bg-app-card p-2 text-app-white">
-            <LogOut size={18} />
-          </button>
+          <div className="flex items-center gap-3">
+            <CountdownTimer compact />
+            <button onClick={handleLogout} className="rounded-md border border-app-border bg-app-card p-2 text-app-white">
+              <LogOut size={18} />
+            </button>
+          </div>
         </div>
         <nav className="grid grid-cols-3 gap-2">
           {navItems.map((item) => {
