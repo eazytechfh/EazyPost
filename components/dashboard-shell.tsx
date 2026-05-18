@@ -8,6 +8,28 @@ import { createSupabaseBrowserClient } from "@/lib/supabase";
 
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
 const TOTAL_SECONDS = 60 * 60;
+const STORAGE_KEY = "eazypost_next_dispatch";
+
+function getOrInitNextDispatch(): number {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const next = Number(stored);
+      if (Number.isFinite(next) && next > Date.now()) {
+        return next;
+      }
+    }
+  } catch {
+    // localStorage indisponível (SSR ou modo privado restrito)
+  }
+  const next = Date.now() + TOTAL_SECONDS * 1000;
+  try { localStorage.setItem(STORAGE_KEY, String(next)); } catch { /* ignore */ }
+  return next;
+}
+
+function saveNextDispatch(next: number) {
+  try { localStorage.setItem(STORAGE_KEY, String(next)); } catch { /* ignore */ }
+}
 
 const navItems = [
   {
@@ -28,13 +50,18 @@ const navItems = [
 ];
 
 function useCountdown() {
-  const [seconds, setSeconds] = useState(TOTAL_SECONDS);
+  const [seconds, setSeconds] = useState(() => {
+    if (typeof window === "undefined") return TOTAL_SECONDS;
+    return Math.max(0, Math.round((getOrInitNextDispatch() - Date.now()) / 1000));
+  });
   const [firing, setFiring] = useState(false);
   const firingRef = useRef(false);
 
   useEffect(() => {
     if (seconds > 0) {
-      const timer = setTimeout(() => setSeconds((s) => s - 1), 1000);
+      const timer = setTimeout(() => {
+        setSeconds(Math.max(0, Math.round((getOrInitNextDispatch() - Date.now()) / 1000)));
+      }, 1000);
       return () => clearTimeout(timer);
     }
 
@@ -49,6 +76,8 @@ function useCountdown() {
     })
       .catch((err) => console.error("Erro ao disparar webhook:", err))
       .finally(() => {
+        const next = Date.now() + TOTAL_SECONDS * 1000;
+        saveNextDispatch(next);
         firingRef.current = false;
         setFiring(false);
         setSeconds(TOTAL_SECONDS);
