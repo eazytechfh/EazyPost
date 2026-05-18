@@ -22,6 +22,7 @@ export function GruposManager() {
   const [searchingGroupIds, setSearchingGroupIds] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshCountdown, setRefreshCountdown] = useState<number | null>(null);
 
   const loadSavedGroupIds = useCallback(async () => {
     setLoading(true);
@@ -128,6 +129,16 @@ export function GruposManager() {
     };
   }, [supabase]);
 
+  useEffect(() => {
+    if (refreshCountdown === null) return;
+    if (refreshCountdown === 0) {
+      window.location.reload();
+      return;
+    }
+    const timer = setTimeout(() => setRefreshCountdown((c) => (c ?? 1) - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [refreshCountdown]);
+
   async function searchGroupIds() {
     const groupNames = groupIdField.trim().length > 0 ? [groupIdField] : [];
 
@@ -138,6 +149,7 @@ export function GruposManager() {
 
     setSearchingGroupIds(true);
     setMessage("");
+    setRefreshCountdown(5);
     setGroupIdResults(
       groupNames.map((name) => ({
         nome_do_grupo: name,
@@ -229,10 +241,16 @@ export function GruposManager() {
           placeholder="Nome do grupo do WhatsApp"
         />
 
-        <button type="button" className="app-button mt-4" onClick={searchGroupIds} disabled={searchingGroupIds}>
+        <button type="button" className="app-button mt-4" onClick={searchGroupIds} disabled={searchingGroupIds || refreshCountdown !== null}>
           {searchingGroupIds ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
           Procurar ID
         </button>
+
+        {refreshCountdown !== null ? (
+          <p className="mt-3 text-sm text-app-muted">
+            Atualizando a página em <span className="font-bold text-app-green">{refreshCountdown}s</span>...
+          </p>
+        ) : null}
 
         {groupIdResults.length > 0 ? (
           <div className="mt-5 overflow-hidden rounded-md border border-app-border">
