@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { CalendarClock, Check, Edit3, Loader2, MoreVertical, Trash2, Users, X } from "lucide-react";
+import { CalendarClock, Check, Edit3, Loader2, MoreVertical, Search, Trash2, Users, X } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
 import type { AnuncioGrupo, IdDosGrupos, Veiculo } from "@/types/database";
@@ -14,6 +14,18 @@ type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor
 };
 
 type LinkedGroupsByVehicle = Record<string, IdDosGrupos[]>;
+
+type VehicleStatus = "pendente" | "ativo" | "inativo" | "vendido" | "devolvido";
+
+const ALL_STATUSES: VehicleStatus[] = ["pendente", "ativo", "inativo", "vendido", "devolvido"];
+
+const STATUS_CONFIG: Record<VehicleStatus, { label: string; badge: string; dot: string; chip: string; activeChip: string }> = {
+  pendente:  { label: "Pendente",  badge: "border-yellow-500 text-yellow-300",  dot: "bg-yellow-400",  chip: "border-app-border text-app-muted hover:border-yellow-500 hover:text-yellow-300",   activeChip: "border-yellow-500 text-yellow-300 bg-yellow-500/10" },
+  ativo:     { label: "Ativo",     badge: "border-green-500 text-green-400",    dot: "bg-green-400",   chip: "border-app-border text-app-muted hover:border-green-500 hover:text-green-400",     activeChip: "border-green-500 text-green-400 bg-green-500/10" },
+  inativo:   { label: "Inativo",   badge: "border-gray-500 text-gray-400",      dot: "bg-gray-400",    chip: "border-app-border text-app-muted hover:border-gray-500 hover:text-gray-400",       activeChip: "border-gray-500 text-gray-400 bg-gray-500/10" },
+  vendido:   { label: "Vendido",   badge: "border-blue-500 text-blue-400",      dot: "bg-blue-400",    chip: "border-app-border text-app-muted hover:border-blue-500 hover:text-blue-400",       activeChip: "border-blue-500 text-blue-400 bg-blue-500/10" },
+  devolvido: { label: "Devolvido", badge: "border-orange-500 text-orange-400",  dot: "bg-orange-400",  chip: "border-app-border text-app-muted hover:border-orange-500 hover:text-orange-400",   activeChip: "border-orange-500 text-orange-400 bg-orange-500/10" },
+};
 
 export function VeiculosList() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -30,6 +42,20 @@ export function VeiculosList() {
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [savingGroups, setSavingGroups] = useState(false);
   const [programModal, setProgramModal] = useState<string | null>(null);
+  const [searchPlaca, setSearchPlaca] = useState("");
+  const [statusFilter, setStatusFilter] = useState<VehicleStatus | null>(null);
+
+  const filteredVeiculos = useMemo(() => {
+    let list = veiculos;
+    if (searchPlaca.trim()) {
+      const term = searchPlaca.trim().toLowerCase();
+      list = list.filter((v) => (v.placa ?? "").slice(-4).toLowerCase().includes(term));
+    }
+    if (statusFilter) {
+      list = list.filter((v) => v.status.trim().toLowerCase() === statusFilter);
+    }
+    return list;
+  }, [veiculos, searchPlaca, statusFilter]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -196,6 +222,18 @@ export function VeiculosList() {
     setOpenMenu(null);
   }
 
+  async function updateVehicleStatus(id: string, status: VehicleStatus) {
+    setOpenMenu(null);
+    const { error } = await supabase
+      .from("veiculos")
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq("id", id);
+
+    if (error) {
+      setMessage(error.message);
+    }
+  }
+
   function toggleSelectedGroup(groupId: string) {
     setSelectedGroupIds((current) =>
       current.includes(groupId) ? current.filter((id) => id !== groupId) : [...current, groupId]
@@ -296,13 +334,59 @@ export function VeiculosList() {
 
       {message ? <p className="mb-4 rounded-md border border-app-border bg-app-panel p-3 text-sm text-app-muted">{message}</p> : null}
 
+      <div className="mb-4 space-y-3">
+        <div className="relative max-w-xs">
+          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-app-muted" />
+          <input
+            className="app-input pl-9"
+            placeholder="Buscar pelos 4 últimos da placa"
+            value={searchPlaca}
+            onChange={(e) => setSearchPlaca(e.target.value)}
+            maxLength={4}
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setStatusFilter(null)}
+            className={`rounded-md border px-3 py-1 text-xs font-semibold transition ${
+              statusFilter === null
+                ? "border-app-green text-app-green bg-app-green/10"
+                : "border-app-border text-app-muted hover:border-app-green hover:text-app-green"
+            }`}
+          >
+            Todos
+          </button>
+          {ALL_STATUSES.map((s) => {
+            const cfg = STATUS_CONFIG[s];
+            const isActive = statusFilter === s;
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(isActive ? null : s)}
+                className={`flex items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-semibold transition ${
+                  isActive ? cfg.activeChip : cfg.chip
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${cfg.dot}`} />
+                {cfg.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {loading ? (
         <div className="app-card p-6 text-sm text-app-muted">Carregando veiculos...</div>
-      ) : veiculos.length === 0 ? (
-        <div className="app-card p-6 text-sm text-app-muted">Nenhum veiculo cadastrado.</div>
+      ) : filteredVeiculos.length === 0 ? (
+        <div className="app-card p-6 text-sm text-app-muted">
+          {veiculos.length === 0 ? "Nenhum veiculo cadastrado." : "Nenhum veiculo encontrado com os filtros aplicados."}
+        </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {veiculos.map((veiculo) => (
+          {filteredVeiculos.map((veiculo) => (
             <VehicleCard
               key={veiculo.id}
               veiculo={veiculo}
@@ -318,6 +402,7 @@ export function VeiculosList() {
               onProgram={() => {
                 void programVehicle(veiculo);
               }}
+              onStatusChange={(status) => void updateVehicleStatus(veiculo.id, status)}
             />
           ))}
         </div>
@@ -404,7 +489,8 @@ function VehicleCard({
   onEdit,
   onDelete,
   onGroups,
-  onProgram
+  onProgram,
+  onStatusChange
 }: {
   veiculo: Veiculo;
   linkedGroups: IdDosGrupos[];
@@ -414,8 +500,10 @@ function VehicleCard({
   onDelete: () => void;
   onGroups: () => void;
   onProgram: () => void;
+  onStatusChange: (status: VehicleStatus) => void;
 }) {
   const thumbnail = useMemo(() => veiculo.imagens?.[0], [veiculo.imagens]);
+  const [showStatusSubmenu, setShowStatusSubmenu] = useState(false);
 
   return (
     <article className="group app-card relative overflow-visible transition hover:border-app-green">
@@ -436,7 +524,7 @@ function VehicleCard({
           </div>
           <div className="relative shrink-0">
             <button
-              onClick={onToggleMenu}
+              onClick={() => { onToggleMenu(); setShowStatusSubmenu(false); }}
               className="rounded-md border border-app-border bg-app-panel p-2 text-app-white transition hover:border-app-green"
               aria-label="Acoes"
             >
@@ -448,6 +536,44 @@ function VehicleCard({
                 <ActionButton icon={<Trash2 size={16} />} label="Excluir" onClick={onDelete} />
                 <ActionButton icon={<Users size={16} />} label="Grupos de Anuncio" onClick={onGroups} />
                 <ActionButton icon={<CalendarClock size={16} />} label="Programar" onClick={onProgram} />
+
+                <div className="my-1 border-t border-app-border" />
+
+                <button
+                  onClick={() => setShowStatusSubmenu((v) => !v)}
+                  className="flex w-full items-center justify-between whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-app-white transition hover:bg-app-card hover:text-app-green"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className={`h-2 w-2 rounded-full ${STATUS_CONFIG[veiculo.status.trim().toLowerCase() as VehicleStatus]?.dot ?? "bg-yellow-400"}`} />
+                    Mudar Status
+                  </span>
+                  <span className="text-app-muted">{showStatusSubmenu ? "▲" : "▼"}</span>
+                </button>
+
+                {showStatusSubmenu ? (
+                  <div className="mt-1 space-y-0.5 rounded-md border border-app-border bg-app-card p-1">
+                    {ALL_STATUSES.map((s) => {
+                      const cfg = STATUS_CONFIG[s];
+                      const isCurrent = veiculo.status.trim().toLowerCase() === s;
+                      return (
+                        <button
+                          key={s}
+                          onClick={() => { onStatusChange(s); setShowStatusSubmenu(false); }}
+                          disabled={isCurrent}
+                          className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition ${
+                            isCurrent
+                              ? "cursor-default opacity-40"
+                              : "hover:bg-app-panel"
+                          } ${cfg.badge.split(" ").find(c => c.startsWith("text-")) ?? "text-app-white"}`}
+                        >
+                          <span className={`h-2 w-2 rounded-full ${cfg.dot}`} />
+                          {cfg.label}
+                          {isCurrent ? <span className="ml-auto text-xs opacity-60">atual</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -457,6 +583,11 @@ function VehicleCard({
           <Info label="Motor" value={veiculo.motor} />
           <Info label="Cor" value={veiculo.cor} />
         </dl>
+        {veiculo.placa ? (
+          <p className="mt-2 text-xs text-app-muted">
+            Placa: <span className="font-semibold text-app-white">{veiculo.placa}</span>
+          </p>
+        ) : null}
       </div>
     </article>
   );
@@ -485,36 +616,14 @@ function buildLinkedGroupsMap(links: AnuncioGrupo[], groupIds: IdDosGrupos[]) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const statusDisplay = getVehicleStatusDisplay(status);
+  const key = status.trim().toLowerCase() as VehicleStatus;
+  const cfg = STATUS_CONFIG[key] ?? STATUS_CONFIG.pendente;
 
   return (
-    <span className={`absolute left-3 top-3 rounded-md border bg-app-panel px-2 py-1 text-xs font-bold ${statusDisplay.className}`}>
-      {statusDisplay.label}
+    <span className={`absolute left-3 top-3 rounded-md border bg-app-panel px-2 py-1 text-xs font-bold ${cfg.badge}`}>
+      {cfg.label}
     </span>
   );
-}
-
-function getVehicleStatusDisplay(status: string) {
-  const normalizedStatus = status.trim().toLowerCase();
-
-  if (normalizedStatus === "ativo") {
-    return {
-      label: "Ativo",
-      className: "border-blue-500 text-blue-400"
-    };
-  }
-
-  if (normalizedStatus === "enviado") {
-    return {
-      label: "Enviado",
-      className: "border-app-green text-app-green"
-    };
-  }
-
-  return {
-    label: "Pendente",
-    className: "border-yellow-500 text-yellow-300"
-  };
 }
 
 function LinkedGroups({ groups }: { groups: IdDosGrupos[] }) {
