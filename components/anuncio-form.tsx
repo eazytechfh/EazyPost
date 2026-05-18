@@ -103,7 +103,7 @@ export function AnuncioForm() {
   }
 
   function handleFiles(nextFiles: FileList | null) {
-    const selected = Array.from(nextFiles ?? []).slice(0, 4);
+    const selected = Array.from(nextFiles ?? []).slice(0, 1);
     setFiles(selected);
     setPreviews(selected.map((file) => URL.createObjectURL(file)));
   }
@@ -311,24 +311,19 @@ export function AnuncioForm() {
           <span className="app-label">Imagens</span>
           <label className="flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-app-border bg-app-panel px-4 py-8 text-center transition hover:border-app-green">
             <ImagePlus className="mb-2 text-app-green" size={28} />
-            <span className="text-sm font-semibold text-app-white">Enviar ate 4 imagens</span>
-            <span className="mt-1 text-xs text-app-muted">As URLs publicas serao salvas no anuncio</span>
+            <span className="text-sm font-semibold text-app-white">Enviar imagem</span>
+            <span className="mt-1 text-xs text-app-muted">A URL publica sera salva no anuncio</span>
             <input
               className="hidden"
               type="file"
               accept="image/*"
-              multiple
               onChange={(event) => handleFiles(event.target.files)}
             />
           </label>
 
-          {previews.length > 0 ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {previews.map((preview) => (
-                <div key={preview} className="relative aspect-video overflow-hidden rounded-md border border-app-border">
-                  <Image src={preview} alt="Preview do veiculo" fill unoptimized className="object-cover" />
-                </div>
-              ))}
+          {previews[0] ? (
+            <div className="relative aspect-video max-w-sm overflow-hidden rounded-md border border-app-border">
+              <Image src={previews[0]} alt="Preview do veiculo" fill unoptimized className="object-cover" />
             </div>
           ) : null}
         </div>
