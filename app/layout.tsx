@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PostGPWA",
+  title: "EazyPost",
   description: "Gestao de anuncios de veiculos para grupos de WhatsApp"
 };
 

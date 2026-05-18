@@ -40,7 +40,7 @@ export function LoginForm() {
       <section className="w-full max-w-md rounded-lg border border-app-border bg-app-panel p-6">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-normal">
-            Post<span className="text-app-green">GPWA</span>
+            Eazy<span className="text-app-green">Post</span>
           </h1>
           <p className="mt-2 text-sm text-app-muted">Anuncios de veiculos para grupos WhatsApp</p>
         </div>

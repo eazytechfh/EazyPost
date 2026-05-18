@@ -49,7 +49,7 @@ export function DashboardShell({
             <ListChecks size={22} />
           </span>
           <div>
-            <p className="text-lg font-bold text-app-white">Post<span className="text-app-green">GPWA</span></p>
+            <p className="text-lg font-bold text-app-white">Eazy<span className="text-app-green">Post</span></p>
             <p className="text-xs text-app-muted">{userEmail}</p>
           </div>
         </Link>
@@ -85,7 +85,7 @@ export function DashboardShell({
       <header className="sticky top-0 z-20 border-b border-app-border bg-app-panel px-4 py-3 lg:hidden">
         <div className="mb-3 flex items-center justify-between">
           <Link href="/dashboard/anuncio" className="text-lg font-bold">
-            Post<span className="text-app-green">GPWA</span>
+            Eazy<span className="text-app-green">Post</span>
           </Link>
           <button onClick={handleLogout} className="rounded-md border border-app-border bg-app-card p-2 text-app-white">
             <LogOut size={18} />
