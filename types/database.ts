@@ -28,6 +28,7 @@ export type Lote = {
   id: string;
   user_id: string;
   nome: string;
+  lote_da_vez: boolean;
   created_at: string;
 } & Record<string, unknown>;
 

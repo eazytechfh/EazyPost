@@ -37,6 +37,8 @@ create table if not exists public.lotes (
 alter table public.veiculos add column if not exists lote_id uuid references public.lotes(id) on delete set null;
 alter table public.veiculos add column if not exists posicao_lote integer not null default 0;
 
+alter table public.lotes add column if not exists lote_da_vez boolean not null default false;
+
 alter table public.lotes enable row level security;
 
 drop policy if exists "lotes_select_authenticated" on public.lotes;

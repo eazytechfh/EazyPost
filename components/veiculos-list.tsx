@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { CalendarClock, Check, Edit3, Layers, Loader2, MoreVertical, PackagePlus, Search, Trash2, Users, X } from "lucide-react";
+import { CalendarClock, Check, Edit3, Layers, Loader2, MoreVertical, PackagePlus, Search, Trash2, Users, X, Zap } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
 import type { AnuncioGrupo, IdDosGrupos, Lote, Veiculo } from "@/types/database";
@@ -269,12 +269,20 @@ export function VeiculosList() {
 
   async function updateVehicleStatus(id: string, status: VehicleStatus) {
     setOpenMenu(null);
+    // Optimistic update — UI reage imediatamente
+    setVeiculos((curr) => curr.map((v) => (v.id === id ? { ...v, status } : v)));
+
     const { error } = await supabase
       .from("veiculos")
       .update({ status, updated_at: new Date().toISOString() })
       .eq("id", id);
 
-    if (error) { setMessage(error.message); return; }
+    if (error) {
+      setMessage(error.message);
+      // Reverte carregando dados frescos
+      await loadData();
+      return;
+    }
 
     if (status === "vendido") {
       const veiculo = veiculos.find((v) => v.id === id);
@@ -311,6 +319,28 @@ export function VeiculosList() {
 
     setNewLoteName("");
     setCreatingLote(false);
+  }
+
+  async function toggleLoteDaVez(loteId: string, isDaVez: boolean) {
+    // Optimistic update
+    setLotes((curr) =>
+      curr.map((l) => ({ ...l, lote_da_vez: isDaVez ? l.id === loteId : l.id === loteId ? false : l.lote_da_vez }))
+    );
+
+    if (isDaVez) {
+      // Clear all others first
+      const { error: clearError } = await supabase
+        .from("lotes")
+        .update({ lote_da_vez: false })
+        .neq("id", loteId);
+      if (clearError) { setMessage(clearError.message); await loadData(); return; }
+    }
+
+    const { error } = await supabase
+      .from("lotes")
+      .update({ lote_da_vez: isDaVez })
+      .eq("id", loteId);
+    if (error) { setMessage(error.message); await loadData(); }
   }
 
   async function moveVehicleToLote(veiculo: Veiculo, targetLoteId: string | null) {
@@ -565,23 +595,37 @@ export function VeiculosList() {
             const count = vehicleCountByLote[lote.id] ?? 0;
             const isActive = loteFilter === lote.id;
             const isFull = count >= LOTE_CAPACITY;
+            const isDaVez = lote.lote_da_vez === true;
             return (
-              <button
-                key={lote.id}
-                type="button"
-                onClick={() => setLoteFilter(isActive ? null : lote.id)}
-                className={`flex items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-semibold transition ${
-                  isActive
-                    ? "border-app-green text-app-green bg-app-green/10"
-                    : "border-app-border text-app-muted hover:border-app-green hover:text-app-green"
-                }`}
-              >
-                <Layers size={11} />
-                {lote.nome}
-                <span className={`ml-0.5 ${isFull ? "text-orange-400" : "text-app-muted"}`}>
-                  {count}/{LOTE_CAPACITY}
-                </span>
-              </button>
+              <div key={lote.id} className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => setLoteFilter(isActive ? null : lote.id)}
+                  className={`flex items-center gap-1.5 rounded-l-md rounded-r-none border px-3 py-1 text-xs font-semibold transition ${
+                    isActive
+                      ? "border-app-green text-app-green bg-app-green/10"
+                      : "border-app-border text-app-muted hover:border-app-green hover:text-app-green"
+                  }`}
+                >
+                  {isDaVez ? <Zap size={11} className="text-yellow-400" /> : <Layers size={11} />}
+                  {lote.nome}
+                  <span className={`ml-0.5 ${isFull ? "text-orange-400" : "text-app-muted"}`}>
+                    {count}/{LOTE_CAPACITY}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  title={isDaVez ? "Remover como próximo disparo" : "Marcar como próximo disparo"}
+                  onClick={() => void toggleLoteDaVez(lote.id, !isDaVez)}
+                  className={`rounded-l-none rounded-r-md border border-l-0 p-1.5 transition ${
+                    isDaVez
+                      ? "border-yellow-500 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20"
+                      : "border-app-border text-app-muted hover:border-yellow-500 hover:text-yellow-400"
+                  }`}
+                >
+                  <Zap size={10} />
+                </button>
+              </div>
             );
           })}
           <button
@@ -804,7 +848,10 @@ function MoverLoteModal({
               />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-app-white text-sm">{lote.nome}</span>
+                  <span className="flex items-center gap-1.5 font-semibold text-app-white text-sm">
+                    {lote.lote_da_vez ? <Zap size={11} className="text-yellow-400 shrink-0" /> : null}
+                    {lote.nome}
+                  </span>
                   <span className={`text-xs font-bold ${isFull ? "text-orange-400" : "text-app-muted"}`}>
                     {count}/{LOTE_CAPACITY}
                   </span>

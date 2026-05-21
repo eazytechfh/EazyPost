@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Car, ListChecks, LogOut, MessageCircle, PlusCircle, Timer } from "lucide-react";
+import { Car, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Timer } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
@@ -159,6 +159,28 @@ export function DashboardShell({
   const pathname = usePathname();
   const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const [proxLote, setProxLote] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchProxLote() {
+      const { data } = await supabase
+        .from("lotes")
+        .select("nome")
+        .eq("lote_da_vez", true)
+        .maybeSingle();
+      setProxLote(data?.nome ?? null);
+    }
+    void fetchProxLote();
+
+    const channel = supabase
+      .channel("lotes-dispatch-shell")
+      .on("postgres_changes", { event: "*", schema: "public", table: "lotes" }, () => {
+        void fetchProxLote();
+      })
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, [supabase]);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -180,6 +202,18 @@ export function DashboardShell({
         </Link>
 
         <CountdownTimer />
+
+        <div className="mb-4 rounded-md border border-app-border bg-app-card px-3 py-2.5">
+          <p className="text-xs text-app-muted">Próximo lote de disparo</p>
+          {proxLote ? (
+            <p className="mt-0.5 flex items-center gap-1.5 truncate text-sm font-bold text-app-green">
+              <Layers size={12} className="shrink-0" />
+              {proxLote}
+            </p>
+          ) : (
+            <p className="mt-0.5 text-sm text-app-muted">—</p>
+          )}
+        </div>
 
         <nav className="space-y-2">
           {navItems.map((item) => {
