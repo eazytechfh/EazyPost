@@ -42,20 +42,23 @@ export function VeiculosList() {
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [savingGroups, setSavingGroups] = useState(false);
   const [programModal, setProgramModal] = useState<string | null>(null);
-  const [searchPlaca, setSearchPlaca] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<VehicleStatus | null>(null);
 
   const filteredVeiculos = useMemo(() => {
     let list = veiculos;
-    if (searchPlaca.trim()) {
-      const term = searchPlaca.trim().toLowerCase();
-      list = list.filter((v) => (v.placa ?? "").slice(-4).toLowerCase().includes(term));
+    if (searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      list = list.filter((v) =>
+        v.nome_anuncio.toLowerCase().includes(term) ||
+        (v.placa ?? "").slice(-4).toLowerCase().includes(term)
+      );
     }
     if (statusFilter) {
       list = list.filter((v) => v.status.trim().toLowerCase() === statusFilter);
     }
     return list;
-  }, [veiculos, searchPlaca, statusFilter]);
+  }, [veiculos, searchTerm, statusFilter]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -231,6 +234,32 @@ export function VeiculosList() {
 
     if (error) {
       setMessage(error.message);
+      return;
+    }
+
+    if (status === "vendido") {
+      const veiculo = veiculos.find((v) => v.id === id);
+      if (veiculo) {
+        fetch("https://eazytech-n8n.gsl3ku.easypanel.host/webhook/73b454b0-7617-406c-9781-e8ba77550d2d", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: veiculo.id,
+            nome_anuncio: veiculo.nome_anuncio,
+            placa: veiculo.placa,
+            valor: veiculo.valor,
+            fipe: veiculo.fipe,
+            cor: veiculo.cor,
+            motor: veiculo.motor,
+            quilometragem: veiculo.quilometragem,
+            ano: veiculo.ano,
+            tipo: veiculo.tipo,
+            status: "vendido",
+            imagens: veiculo.imagens,
+            texto_anuncio: veiculo.texto_anuncio
+          })
+        }).catch((err) => console.error("Erro ao disparar webhook de venda:", err));
+      }
     }
   }
 
@@ -335,14 +364,13 @@ export function VeiculosList() {
       {message ? <p className="mb-4 rounded-md border border-app-border bg-app-panel p-3 text-sm text-app-muted">{message}</p> : null}
 
       <div className="mb-4 space-y-3">
-        <div className="relative max-w-xs">
+        <div className="relative max-w-sm">
           <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-app-muted" />
           <input
             className="app-input pl-9"
-            placeholder="Buscar pelos 4 últimos da placa"
-            value={searchPlaca}
-            onChange={(e) => setSearchPlaca(e.target.value)}
-            maxLength={4}
+            placeholder="Buscar por nome ou 4 últimos da placa"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
 

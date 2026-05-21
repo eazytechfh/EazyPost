@@ -14,6 +14,7 @@ export type Veiculo = {
   cor: string;
   fipe: string;
   placa: string;
+  tipo: string;
   texto_anuncio: string;
   imagens: string[];
   status: string;

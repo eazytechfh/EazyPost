@@ -17,6 +17,7 @@ type FormState = {
   fipe: string;
   placa: string;
   ano: string;
+  tipo: string;
   texto_anuncio: string;
 };
 
@@ -67,6 +68,7 @@ const initialState: FormState = {
   fipe: "",
   placa: "",
   ano: "",
+  tipo: "aleatorio",
   texto_anuncio: buildAnuncioTemplate({ nome_anuncio: "", fipe: "", valor: "", ano: "", quilometragem: "", placa: "" })
 };
 
@@ -174,6 +176,7 @@ export function AnuncioForm() {
           cor: form.cor,
           fipe: form.fipe,
           placa: `XXX-${form.placa}`,
+          tipo: form.tipo,
           texto_anuncio: form.texto_anuncio,
           imagens: imageUrls,
           status: "pendente"
@@ -282,6 +285,19 @@ export function AnuncioForm() {
               placeholder="Prata"
               required
             />
+          </label>
+
+          <label className="space-y-2">
+            <span className="app-label">Tipo</span>
+            <select
+              className="app-input"
+              value={form.tipo}
+              onChange={(event) => updateField("tipo", event.target.value)}
+              required
+            >
+              <option value="aleatorio">ALEATÓRIO</option>
+              <option value="prioridade">PRIORIDADE</option>
+            </select>
           </label>
 
           <label className="space-y-2">
