@@ -10,18 +10,23 @@ const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875
 const TOTAL_SECONDS = 60 * 60;
 const STORAGE_KEY = "eazypost_next_dispatch";
 
+/**
+ * Retorna o timestamp armazenado — mesmo que já tenha expirado.
+ * Isso garante que o hook detecte seconds=0 na inicialização e
+ * dispare o webhook imediatamente se o timer expirou com a página fechada.
+ * Só cria um novo timestamp se não houver NADA salvo ainda.
+ */
 function getOrInitNextDispatch(): number {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const next = Number(stored);
-      if (Number.isFinite(next) && next > Date.now()) {
-        return next;
-      }
+      if (Number.isFinite(next)) return next; // retorna mesmo se no passado
     }
   } catch {
     // localStorage indisponível (SSR ou modo privado restrito)
   }
+  // Primeira vez — cria timestamp
   const next = Date.now() + TOTAL_SECONDS * 1000;
   try { localStorage.setItem(STORAGE_KEY, String(next)); } catch { /* ignore */ }
   return next;
@@ -29,6 +34,34 @@ function getOrInitNextDispatch(): number {
 
 function saveNextDispatch(next: number) {
   try { localStorage.setItem(STORAGE_KEY, String(next)); } catch { /* ignore */ }
+}
+
+/**
+ * Dispara o webhook com até 4 tentativas (backoff: 0s → 3s → 7s → 15s).
+ * Sempre resolve (nunca rejeita) para que o timer resete mesmo em falha total.
+ */
+async function tryFireWebhook(): Promise<void> {
+  const retryDelays = [0, 3000, 7000, 15000];
+  for (let attempt = 0; attempt < retryDelays.length; attempt++) {
+    if (retryDelays[attempt] > 0) {
+      await new Promise<void>((r) => setTimeout(r, retryDelays[attempt]));
+    }
+    try {
+      const res = await fetch(WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disparar: "ok" })
+      });
+      if (res.ok) {
+        console.info(`[EazyPost] Webhook disparado (tentativa ${attempt + 1})`);
+        return;
+      }
+      console.warn(`[EazyPost] Webhook HTTP ${res.status} — tentativa ${attempt + 1}/${retryDelays.length}`);
+    } catch (err) {
+      console.warn(`[EazyPost] Webhook erro — tentativa ${attempt + 1}/${retryDelays.length}:`, err);
+    }
+  }
+  console.error("[EazyPost] Webhook falhou após todas as tentativas — timer será resetado mesmo assim.");
 }
 
 const navItems = [
@@ -69,19 +102,13 @@ function useCountdown() {
     firingRef.current = true;
     setFiring(true);
 
-    fetch(WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ disparar: "ok" })
-    })
-      .catch((err) => console.error("Erro ao disparar webhook:", err))
-      .finally(() => {
-        const next = Date.now() + TOTAL_SECONDS * 1000;
-        saveNextDispatch(next);
-        firingRef.current = false;
-        setFiring(false);
-        setSeconds(TOTAL_SECONDS);
-      });
+    void tryFireWebhook().finally(() => {
+      const next = Date.now() + TOTAL_SECONDS * 1000;
+      saveNextDispatch(next);
+      firingRef.current = false;
+      setFiring(false);
+      setSeconds(TOTAL_SECONDS);
+    });
   }, [seconds]);
 
   const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
