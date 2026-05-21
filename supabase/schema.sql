@@ -27,6 +27,32 @@ alter table public.veiculos add column if not exists fipe text not null default 
 alter table public.veiculos add column if not exists placa text not null default '';
 alter table public.veiculos add column if not exists tipo text not null default 'aleatorio';
 
+create table if not exists public.lotes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete cascade,
+  nome text not null,
+  created_at timestamp with time zone default now()
+);
+
+alter table public.veiculos add column if not exists lote_id uuid references public.lotes(id) on delete set null;
+alter table public.veiculos add column if not exists posicao_lote integer not null default 0;
+
+alter table public.lotes enable row level security;
+
+drop policy if exists "lotes_select_authenticated" on public.lotes;
+drop policy if exists "lotes_insert_own" on public.lotes;
+drop policy if exists "lotes_update_authenticated" on public.lotes;
+drop policy if exists "lotes_delete_authenticated" on public.lotes;
+
+create policy "lotes_select_authenticated" on public.lotes
+  for select using (auth.role() = 'authenticated');
+create policy "lotes_insert_own" on public.lotes
+  for insert with check (auth.uid() = user_id);
+create policy "lotes_update_authenticated" on public.lotes
+  for update using (auth.role() = 'authenticated');
+create policy "lotes_delete_authenticated" on public.lotes
+  for delete using (auth.role() = 'authenticated');
+
 create table if not exists public.id_dos_grupos (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles(id) on delete cascade,

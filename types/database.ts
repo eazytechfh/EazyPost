@@ -18,8 +18,17 @@ export type Veiculo = {
   texto_anuncio: string;
   imagens: string[];
   status: string;
+  lote_id: string | null;
+  posicao_lote: number;
   created_at: string;
   updated_at: string;
+} & Record<string, unknown>;
+
+export type Lote = {
+  id: string;
+  user_id: string;
+  nome: string;
+  created_at: string;
 } & Record<string, unknown>;
 
 export type IdDosGrupos = {
@@ -82,6 +91,15 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<Omit<AnuncioGrupo, "id" | "user_id" | "created_at">>;
+        Relationships: [];
+      };
+      lotes: {
+        Row: Lote;
+        Insert: Omit<Lote, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Omit<Lote, "id" | "user_id" | "created_at">>;
         Relationships: [];
       };
     };
