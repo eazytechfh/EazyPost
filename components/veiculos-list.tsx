@@ -387,7 +387,7 @@ export function VeiculosList() {
       }
 
       // Deduplicate: keep last update per vehicle id
-      const deduped = [...new Map(updates.map((u) => [u.id, u])).values()];
+      const deduped = Array.from(new Map(updates.map((u) => [u.id, u])).values());
 
       const results = await Promise.all(
         deduped.map(({ id, lote_id, posicao_lote }) =>
