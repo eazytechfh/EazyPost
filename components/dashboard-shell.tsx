@@ -11,7 +11,7 @@ const TOTAL_SECONDS = 60 * 60;
 
 /**
  * Dispara o webhook com até 4 tentativas (backoff: 0s → 3s → 7s → 15s).
- * Sempre resolve (nunca rejeita) para que o timer resete mesmo em falha total.
+ * Sempre resolve — nunca rejeita — para que o timer resete mesmo em falha total.
  */
 async function tryFireWebhook(): Promise<void> {
   const retryDelays = [0, 3000, 7000, 15000];
@@ -34,141 +34,38 @@ async function tryFireWebhook(): Promise<void> {
       console.warn(`[EazyPost] Webhook erro — tentativa ${attempt + 1}/${retryDelays.length}:`, err);
     }
   }
-  console.error("[EazyPost] Webhook falhou após todas as tentativas — timer será resetado mesmo assim.");
+  console.error("[EazyPost] Webhook falhou após todas as tentativas — timer resetado mesmo assim.");
 }
 
 const navItems = [
-  {
-    href: "/dashboard/anuncio",
-    label: "Cadastrar Anuncio",
-    icon: PlusCircle
-  },
-  {
-    href: "/dashboard/veiculos",
-    label: "Lista de Veiculos",
-    icon: Car
-  },
-  {
-    href: "/dashboard/grupos",
-    label: "Grupos",
-    icon: MessageCircle
-  }
+  { href: "/dashboard/anuncio", label: "Cadastrar Anuncio", icon: PlusCircle },
+  { href: "/dashboard/veiculos", label: "Lista de Veiculos", icon: Car },
+  { href: "/dashboard/grupos", label: "Grupos", icon: MessageCircle }
 ];
 
-/**
- * Fonte de verdade: tabela dispatch_config no Supabase (id=1, next_dispatch_at).
- * Todos os browsers leem o mesmo timestamp — real-time sincroniza qualquer mudança.
- * Quando o timer chega em 00:00 num browser:
- *   1. Dispara o webhook (com retry)
- *   2. Grava novo next_dispatch_at no Supabase
- *   3. O real-time propaga para TODOS os outros browsers imediatamente
- */
-function useCountdown() {
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  // null = ainda carregando do banco
-  const [nextAt, setNextAt] = useState<number | null>(null);
-  const [seconds, setSeconds] = useState(TOTAL_SECONDS);
-  const [firing, setFiring] = useState(false);
-  const firingRef = useRef(false);
-
-  // 1. Busca o timestamp global do Supabase ao montar
-  useEffect(() => {
-    async function init() {
-      const { data } = await supabase
-        .from("dispatch_config")
-        .select("next_dispatch_at")
-        .eq("id", 1)
-        .maybeSingle();
-
-      if (data?.next_dispatch_at) {
-        const ts = new Date(data.next_dispatch_at as string).getTime();
-        setNextAt(ts);
-        setSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
-      } else {
-        // Tabela ainda não configurada — começa timer local como fallback
-        setNextAt(Date.now() + TOTAL_SECONDS * 1000);
-        setSeconds(TOTAL_SECONDS);
-      }
-    }
-    void init();
-  }, [supabase]);
-
-  // 2. Real-time: qualquer browser que disparar atualiza todos os outros
-  useEffect(() => {
-    const channel = supabase
-      .channel("dispatch-config-rt")
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "dispatch_config" },
-        (payload) => {
-          const ts = new Date(payload.new.next_dispatch_at as string).getTime();
-          setNextAt(ts);
-          setSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
-          firingRef.current = false;
-          setFiring(false);
-        }
-      )
-      .subscribe();
-
-    return () => { void supabase.removeChannel(channel); };
-  }, [supabase]);
-
-  // 3. Tick de countdown + disparo ao chegar em 0
-  useEffect(() => {
-    if (nextAt === null) return; // aguarda init
-
-    if (seconds > 0) {
-      const id = setTimeout(() => {
-        setSeconds(Math.max(0, Math.round((nextAt - Date.now()) / 1000)));
-      }, 1000);
-      return () => clearTimeout(id);
-    }
-
-    if (firingRef.current) return;
-    firingRef.current = true;
-    setFiring(true);
-
-    const newNext = Date.now() + TOTAL_SECONDS * 1000;
-
-    async function fire() {
-      await tryFireWebhook();
-      // Grava no Supabase — o real-time propaga para todos os outros browsers
-      await supabase
-        .from("dispatch_config")
-        .update({ next_dispatch_at: new Date(newNext).toISOString() })
-        .eq("id", 1);
-    }
-
-    void fire().finally(() => {
-      // Atualiza localmente também (caso real-time demore)
-      setNextAt(newNext);
-      setSeconds(TOTAL_SECONDS);
-      firingRef.current = false;
-      setFiring(false);
-    });
-  }, [seconds, nextAt, supabase]);
-
+// ---------------------------------------------------------------------------
+// CountdownTimer — componente puro de exibição (sem lógica de estado própria)
+// ---------------------------------------------------------------------------
+function CountdownTimer({
+  seconds,
+  firing,
+  compact = false
+}: {
+  seconds: number;
+  firing: boolean;
+  compact?: boolean;
+}) {
   const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
   const secs = String(seconds % 60).padStart(2, "0");
   const display = `${minutes}:${secs}`;
 
   const colorClass =
-    seconds > 600
-      ? "text-app-green"
-      : seconds > 300
-      ? "text-yellow-400"
-      : seconds > 60
-      ? "text-orange-400"
-      : "text-red-400";
+    seconds > 600 ? "text-app-green"
+    : seconds > 300 ? "text-yellow-400"
+    : seconds > 60  ? "text-orange-400"
+    : "text-red-400";
 
   const progress = seconds / TOTAL_SECONDS;
-
-  return { display, colorClass, firing, progress, seconds };
-}
-
-function CountdownTimer({ compact = false }: { compact?: boolean }) {
-  const { display, colorClass, firing, progress } = useCountdown();
-
   const circumference = 2 * Math.PI * 18;
   const dashOffset = circumference * (1 - progress);
 
@@ -176,7 +73,7 @@ function CountdownTimer({ compact = false }: { compact?: boolean }) {
     return (
       <div className={`flex items-center gap-1.5 text-sm font-bold tabular-nums ${colorClass}`}>
         <Timer size={14} />
-        <span>{display}</span>
+        <span>{firing ? "..." : display}</span>
         {firing ? <span className="text-xs text-app-muted">●</span> : null}
       </div>
     );
@@ -189,9 +86,7 @@ function CountdownTimer({ compact = false }: { compact?: boolean }) {
           <svg width="44" height="44" viewBox="0 0 44 44" className="-rotate-90">
             <circle cx="22" cy="22" r="18" fill="none" stroke="currentColor" strokeWidth="3" className="text-app-border" />
             <circle
-              cx="22"
-              cy="22"
-              r="18"
+              cx="22" cy="22" r="18"
               fill="none"
               strokeWidth="3"
               strokeDasharray={circumference}
@@ -213,6 +108,9 @@ function CountdownTimer({ compact = false }: { compact?: boolean }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// DashboardShell — toda a lógica do timer vive aqui (instância única)
+// ---------------------------------------------------------------------------
 export function DashboardShell({
   children,
   userEmail
@@ -223,6 +121,108 @@ export function DashboardShell({
   const pathname = usePathname();
   const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+
+  // --- timer ---
+  const [timerSeconds, setTimerSeconds] = useState(TOTAL_SECONDS);
+  const [timerFiring, setTimerFiring] = useState(false);
+  const firingRef = useRef(false);
+  // Ref (não state) para o timestamp — evita re-renders desnecessários
+  const nextAtRef = useRef<number | null>(null);
+
+  // 1. Busca o timestamp global do Supabase ao montar
+  useEffect(() => {
+    async function init() {
+      try {
+        const { data, error } = await supabase
+          .from("dispatch_config")
+          .select("next_dispatch_at")
+          .eq("id", 1)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (data?.next_dispatch_at) {
+          const ts = new Date(data.next_dispatch_at as string).getTime();
+          if (Number.isFinite(ts)) {
+            nextAtRef.current = ts;
+            setTimerSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("[EazyPost] dispatch_config não encontrado, usando timer local:", err);
+      }
+      // Fallback: tabela ainda não existe ou linha não criada
+      nextAtRef.current = Date.now() + TOTAL_SECONDS * 1000;
+      setTimerSeconds(TOTAL_SECONDS);
+    }
+    void init();
+  }, [supabase]);
+
+  // 2. Real-time: sincroniza todos os browsers quando qualquer um disparar
+  useEffect(() => {
+    const channel = supabase
+      .channel("dispatch-config-rt")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "dispatch_config" },
+        (payload) => {
+          try {
+            const raw = (payload.new as Record<string, unknown>).next_dispatch_at;
+            const ts = new Date(raw as string).getTime();
+            if (!Number.isFinite(ts)) return;
+            nextAtRef.current = ts;
+            setTimerSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
+            firingRef.current = false;
+            setTimerFiring(false);
+          } catch {
+            // ignora payload malformado
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, [supabase]);
+
+  // 3. Tick de countdown + disparo ao chegar em 0
+  useEffect(() => {
+    if (nextAtRef.current === null) return; // aguarda init
+
+    if (timerSeconds > 0) {
+      const id = setTimeout(() => {
+        const remaining = Math.max(0, Math.round(((nextAtRef.current ?? 0) - Date.now()) / 1000));
+        setTimerSeconds(remaining);
+      }, 1000);
+      return () => clearTimeout(id);
+    }
+
+    // seconds === 0: hora de disparar
+    if (firingRef.current) return;
+    firingRef.current = true;
+    setTimerFiring(true);
+
+    const newNext = Date.now() + TOTAL_SECONDS * 1000;
+
+    async function fire() {
+      await tryFireWebhook();
+      // Grava no Supabase — real-time propaga para todos os outros browsers
+      const { error } = await supabase
+        .from("dispatch_config")
+        .update({ next_dispatch_at: new Date(newNext).toISOString() })
+        .eq("id", 1);
+      if (error) console.error("[EazyPost] Erro ao gravar próximo disparo:", error);
+    }
+
+    void fire().finally(() => {
+      nextAtRef.current = newNext;
+      setTimerSeconds(TOTAL_SECONDS);
+      firingRef.current = false;
+      setTimerFiring(false);
+    });
+  }, [timerSeconds, supabase]);
+
+  // --- próximo lote ---
   const [proxLote, setProxLote] = useState<string | null>(null);
 
   useEffect(() => {
@@ -265,7 +265,7 @@ export function DashboardShell({
           </div>
         </Link>
 
-        <CountdownTimer />
+        <CountdownTimer seconds={timerSeconds} firing={timerFiring} />
 
         <div className="mb-4 rounded-md border border-app-border bg-app-card px-3 py-2.5">
           <p className="text-xs text-app-muted">Próximo lote de disparo</p>
@@ -283,7 +283,6 @@ export function DashboardShell({
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;
-
             return (
               <Link
                 key={item.href}
@@ -313,7 +312,7 @@ export function DashboardShell({
             Eazy<span className="text-app-green">Post</span>
           </Link>
           <div className="flex items-center gap-3">
-            <CountdownTimer compact />
+            <CountdownTimer seconds={timerSeconds} firing={timerFiring} compact />
             <button onClick={handleLogout} className="rounded-md border border-app-border bg-app-card p-2 text-app-white">
               <LogOut size={18} />
             </button>
@@ -323,7 +322,6 @@ export function DashboardShell({
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;
-
             return (
               <Link
                 key={item.href}
