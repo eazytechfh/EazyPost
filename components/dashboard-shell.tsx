@@ -8,33 +8,6 @@ import { createSupabaseBrowserClient } from "@/lib/supabase";
 
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
 const TOTAL_SECONDS = 60 * 60;
-const STORAGE_KEY = "eazypost_next_dispatch";
-
-/**
- * Retorna o timestamp armazenado — mesmo que já tenha expirado.
- * Isso garante que o hook detecte seconds=0 na inicialização e
- * dispare o webhook imediatamente se o timer expirou com a página fechada.
- * Só cria um novo timestamp se não houver NADA salvo ainda.
- */
-function getOrInitNextDispatch(): number {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const next = Number(stored);
-      if (Number.isFinite(next)) return next; // retorna mesmo se no passado
-    }
-  } catch {
-    // localStorage indisponível (SSR ou modo privado restrito)
-  }
-  // Primeira vez — cria timestamp
-  const next = Date.now() + TOTAL_SECONDS * 1000;
-  try { localStorage.setItem(STORAGE_KEY, String(next)); } catch { /* ignore */ }
-  return next;
-}
-
-function saveNextDispatch(next: number) {
-  try { localStorage.setItem(STORAGE_KEY, String(next)); } catch { /* ignore */ }
-}
 
 /**
  * Dispara o webhook com até 4 tentativas (backoff: 0s → 3s → 7s → 15s).
@@ -82,34 +55,98 @@ const navItems = [
   }
 ];
 
+/**
+ * Fonte de verdade: tabela dispatch_config no Supabase (id=1, next_dispatch_at).
+ * Todos os browsers leem o mesmo timestamp — real-time sincroniza qualquer mudança.
+ * Quando o timer chega em 00:00 num browser:
+ *   1. Dispara o webhook (com retry)
+ *   2. Grava novo next_dispatch_at no Supabase
+ *   3. O real-time propaga para TODOS os outros browsers imediatamente
+ */
 function useCountdown() {
-  const [seconds, setSeconds] = useState(() => {
-    if (typeof window === "undefined") return TOTAL_SECONDS;
-    return Math.max(0, Math.round((getOrInitNextDispatch() - Date.now()) / 1000));
-  });
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  // null = ainda carregando do banco
+  const [nextAt, setNextAt] = useState<number | null>(null);
+  const [seconds, setSeconds] = useState(TOTAL_SECONDS);
   const [firing, setFiring] = useState(false);
   const firingRef = useRef(false);
 
+  // 1. Busca o timestamp global do Supabase ao montar
   useEffect(() => {
+    async function init() {
+      const { data } = await supabase
+        .from("dispatch_config")
+        .select("next_dispatch_at")
+        .eq("id", 1)
+        .maybeSingle();
+
+      if (data?.next_dispatch_at) {
+        const ts = new Date(data.next_dispatch_at as string).getTime();
+        setNextAt(ts);
+        setSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
+      } else {
+        // Tabela ainda não configurada — começa timer local como fallback
+        setNextAt(Date.now() + TOTAL_SECONDS * 1000);
+        setSeconds(TOTAL_SECONDS);
+      }
+    }
+    void init();
+  }, [supabase]);
+
+  // 2. Real-time: qualquer browser que disparar atualiza todos os outros
+  useEffect(() => {
+    const channel = supabase
+      .channel("dispatch-config-rt")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "dispatch_config" },
+        (payload) => {
+          const ts = new Date(payload.new.next_dispatch_at as string).getTime();
+          setNextAt(ts);
+          setSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
+          firingRef.current = false;
+          setFiring(false);
+        }
+      )
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, [supabase]);
+
+  // 3. Tick de countdown + disparo ao chegar em 0
+  useEffect(() => {
+    if (nextAt === null) return; // aguarda init
+
     if (seconds > 0) {
-      const timer = setTimeout(() => {
-        setSeconds(Math.max(0, Math.round((getOrInitNextDispatch() - Date.now()) / 1000)));
+      const id = setTimeout(() => {
+        setSeconds(Math.max(0, Math.round((nextAt - Date.now()) / 1000)));
       }, 1000);
-      return () => clearTimeout(timer);
+      return () => clearTimeout(id);
     }
 
     if (firingRef.current) return;
     firingRef.current = true;
     setFiring(true);
 
-    void tryFireWebhook().finally(() => {
-      const next = Date.now() + TOTAL_SECONDS * 1000;
-      saveNextDispatch(next);
+    const newNext = Date.now() + TOTAL_SECONDS * 1000;
+
+    async function fire() {
+      await tryFireWebhook();
+      // Grava no Supabase — o real-time propaga para todos os outros browsers
+      await supabase
+        .from("dispatch_config")
+        .update({ next_dispatch_at: new Date(newNext).toISOString() })
+        .eq("id", 1);
+    }
+
+    void fire().finally(() => {
+      // Atualiza localmente também (caso real-time demore)
+      setNextAt(newNext);
+      setSeconds(TOTAL_SECONDS);
       firingRef.current = false;
       setFiring(false);
-      setSeconds(TOTAL_SECONDS);
     });
-  }, [seconds]);
+  }, [seconds, nextAt, supabase]);
 
   const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
   const secs = String(seconds % 60).padStart(2, "0");

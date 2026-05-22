@@ -39,6 +39,29 @@ alter table public.veiculos add column if not exists posicao_lote integer not nu
 
 alter table public.lotes add column if not exists lote_da_vez boolean not null default false;
 
+-- Tabela global de configuração do timer de disparo (uma única linha, id=1)
+create table if not exists public.dispatch_config (
+  id integer primary key,
+  next_dispatch_at timestamp with time zone not null default (now() + interval '1 hour')
+);
+
+-- Garante que a linha inicial existe
+insert into public.dispatch_config (id, next_dispatch_at)
+values (1, now() + interval '1 hour')
+on conflict (id) do nothing;
+
+alter table public.dispatch_config enable row level security;
+
+drop policy if exists "dispatch_config_select_authenticated" on public.dispatch_config;
+drop policy if exists "dispatch_config_update_authenticated" on public.dispatch_config;
+
+create policy "dispatch_config_select_authenticated" on public.dispatch_config
+  for select using (auth.role() = 'authenticated');
+
+create policy "dispatch_config_update_authenticated" on public.dispatch_config
+  for update using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');
+
 alter table public.lotes enable row level security;
 
 drop policy if exists "lotes_select_authenticated" on public.lotes;
