@@ -288,6 +288,25 @@ export function VeiculosList() {
     if (status === "vendido") {
       const veiculo = veiculos.find((v) => v.id === id);
       if (veiculo) {
+        // Busca os id_do_grupo direto do banco para garantir dados frescos
+        const { data: links } = await supabase
+          .from("anuncio_grupos")
+          .select("grupo_id")
+          .eq("veiculo_id", id);
+
+        const grupoDbIds = (links ?? []).map((l: { grupo_id: string }) => l.grupo_id);
+
+        let grupos_ids: string[] = [];
+        if (grupoDbIds.length > 0) {
+          const { data: grupos } = await supabase
+            .from("id_dos_grupos")
+            .select("id_do_grupo")
+            .in("id", grupoDbIds);
+          grupos_ids = (grupos ?? [])
+            .map((g: { id_do_grupo: string | null }) => g.id_do_grupo)
+            .filter((v): v is string => Boolean(v));
+        }
+
         fetch("https://n8n.eazy.tec.br/webhook/887a42e8-429f-423b-9b98-29d99da61015", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -300,14 +319,11 @@ export function VeiculosList() {
             cor: veiculo.cor,
             motor: veiculo.motor,
             quilometragem: veiculo.quilometragem,
-            ano: veiculo.ano,
             tipo: veiculo.tipo,
             status: "vendido",
             imagens: veiculo.imagens,
             texto_anuncio: veiculo.texto_anuncio,
-            grupos_ids: (linkedGroupsByVehicle[id] ?? [])
-              .map((g) => g.id_do_grupo)
-              .filter(Boolean)
+            grupos_ids
           })
         }).catch((err) => console.error("Erro ao disparar webhook de venda:", err));
       }
