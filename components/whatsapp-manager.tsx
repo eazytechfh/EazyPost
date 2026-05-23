@@ -111,7 +111,7 @@ function InstanciaCard({
       return;
     }
 
-    setQrcode(result.data.qrcode);
+    setQrcode(result.data?.qrcode ?? null);
     onStatusChange(instancia.id, "aguardando");
     startPolling(instancia.id);
   }
