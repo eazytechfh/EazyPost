@@ -61,6 +61,17 @@ export type WhatsappInstancia = {
   created_at: string;
 } & Record<string, unknown>;
 
+export type LogAuditoria = {
+  id: string;
+  user_email: string;
+  user_id: string | null;
+  acao: string;
+  entidade: string;
+  entidade_id: string | null;
+  detalhes: Record<string, unknown> | unknown[] | string | number | boolean | null;
+  created_at: string;
+} & Record<string, unknown>;
+
 export type Database = {
   public: {
     Tables: {
@@ -122,6 +133,15 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<Omit<WhatsappInstancia, "id" | "user_id" | "created_at">>;
+        Relationships: [];
+      };
+      logs_auditoria: {
+        Row: LogAuditoria;
+        Insert: Omit<LogAuditoria, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Omit<LogAuditoria, "id" | "created_at">>;
         Relationships: [];
       };
     };

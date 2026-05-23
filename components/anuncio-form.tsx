@@ -5,6 +5,7 @@ import Image from "next/image";
 import { ImagePlus, Loader2, Save } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { cleanCurrencyInput, parseCurrencyInput } from "@/lib/format";
+import { registrarLogComCliente } from "@/lib/audit-log";
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
 
@@ -165,7 +166,7 @@ export function AnuncioForm() {
       }
 
       const imageUrls = await uploadImages(user.id);
-      const { error } = await supabase
+      const { data: inserted, error } = await supabase
         .from("veiculos")
         .insert({
           user_id: user.id,
@@ -180,11 +181,23 @@ export function AnuncioForm() {
           texto_anuncio: form.texto_anuncio,
           imagens: imageUrls,
           status: "pendente"
-        });
+        })
+        .select("id")
+        .single();
 
       if (error) {
         console.error("Erro ao inserir anuncio na tabela veiculos:", error);
         throw error;
+      }
+
+      if (inserted) {
+        await registrarLogComCliente(
+          supabase,
+          `Usuario ${user.email ?? ""} criou o anuncio [${form.nome_anuncio}]`,
+          "anuncio",
+          inserted.id,
+          { nome_anuncio: form.nome_anuncio, placa: `XXX-${form.placa}` }
+        );
       }
 
       setForm(initialState);

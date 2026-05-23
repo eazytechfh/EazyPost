@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getUazapiBaseUrl, getUazapiToken } from "@/lib/env";
+import { registrarLogComCliente } from "@/lib/audit-log";
 
 type ActionResult<T> = { data: T; error?: never } | { data?: never; error: string };
 
@@ -167,6 +168,14 @@ export async function criarInstanciaAction(nome: string): Promise<ActionResult<I
 
   if (dbErr || !inserted) return { error: dbErr?.message ?? "Erro ao salvar instancia." };
 
+  await registrarLogComCliente(
+    supabase,
+    `Usuario criou a instancia WhatsApp [${nome.trim()}]`,
+    "whatsapp_instancia",
+    inserted.id,
+    { nome: nome.trim() }
+  );
+
   return { data: inserted as InstanciaRow };
 }
 
@@ -210,6 +219,14 @@ export async function conectarInstanciaAction(
     .update({ status: "aguardando" })
     .eq("id", instanciaId);
 
+  await registrarLogComCliente(
+    supabase,
+    "Usuario solicitou conexao de instancia WhatsApp",
+    "whatsapp_instancia",
+    instanciaId,
+    { status: "aguardando" }
+  );
+
   return { data: { qrcode } };
 }
 
@@ -249,6 +266,14 @@ export async function verificarStatusAction(
     .update({ status: statusLabel })
     .eq("id", instanciaId);
 
+  await registrarLogComCliente(
+    supabase,
+    `Usuario atualizou o status da instancia WhatsApp para [${statusLabel}]`,
+    "whatsapp_instancia",
+    instanciaId,
+    { status: statusLabel }
+  );
+
   return { data: { conectado, status: statusLabel } };
 }
 
@@ -278,6 +303,14 @@ export async function desconectarInstanciaAction(
     .update({ status: "desconectado" })
     .eq("id", instanciaId);
 
+  await registrarLogComCliente(
+    supabase,
+    "Usuario desconectou a instancia WhatsApp",
+    "whatsapp_instancia",
+    instanciaId,
+    { status: "desconectado" }
+  );
+
   return { data: true };
 }
 
@@ -305,6 +338,13 @@ export async function deletarInstanciaAction(
     .eq("id", instanciaId);
 
   if (dbErr) return { error: dbErr.message };
+
+  await registrarLogComCliente(
+    supabase,
+    "Usuario excluiu a instancia WhatsApp",
+    "whatsapp_instancia",
+    instanciaId
+  );
 
   return { data: true };
 }

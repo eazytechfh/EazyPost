@@ -4,12 +4,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { CalendarClock, Check, Edit3, Layers, Loader2, MoreVertical, PackagePlus, Search, Trash2, Users, X, Zap } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
+import { registrarLogComCliente } from "@/lib/audit-log";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
 import type { AnuncioGrupo, IdDosGrupos, Lote, Veiculo } from "@/types/database";
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
 
 const LOTE_CAPACITY = 16;
+const PAGE_SIZE = 12;
 
 type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor" | "texto_anuncio"> & {
   valor: string;
@@ -65,42 +67,43 @@ export function VeiculosList() {
   const [creatingLote, setCreatingLote] = useState(false);
   const [newLoteName, setNewLoteName] = useState("");
   const [movingToLote, setMovingToLote] = useState(false);
+  const [vehicleCountByLote, setVehicleCountByLote] = useState<Record<string, number>>({});
+  const [totalVehicles, setTotalVehicles] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const vehicleCountByLote = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const v of veiculos) {
-      if (v.lote_id) {
-        counts[v.lote_id] = (counts[v.lote_id] ?? 0) + 1;
-      }
-    }
-    return counts;
-  }, [veiculos]);
-
-  const filteredVeiculos = useMemo(() => {
-    let list = veiculos;
-    if (searchTerm.trim()) {
-      const term = searchTerm.trim().toLowerCase();
-      list = list.filter((v) =>
-        v.nome_anuncio.toLowerCase().includes(term) ||
-        (v.placa ?? "").slice(-4).toLowerCase().includes(term)
-      );
-    }
-    if (statusFilter) {
-      list = list.filter((v) => v.status.trim().toLowerCase() === statusFilter);
-    }
-    if (loteFilter === "sem-lote") {
-      list = list.filter((v) => !v.lote_id);
-    } else if (loteFilter) {
-      list = list.filter((v) => v.lote_id === loteFilter);
-      list = [...list].sort((a, b) => (a.posicao_lote ?? 0) - (b.posicao_lote ?? 0));
-    }
-    return list;
-  }, [veiculos, searchTerm, statusFilter, loteFilter]);
+  const totalPages = Math.max(1, Math.ceil(totalVehicles / PAGE_SIZE));
+  const hasActiveFilters = Boolean(searchTerm.trim() || statusFilter || loteFilter);
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    const from = (currentPage - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    const term = searchTerm.trim();
+
+    let vehiclesQuery = supabase
+      .from("veiculos")
+      .select("*", { count: "exact" });
+
+    if (term) {
+      vehiclesQuery = vehiclesQuery.or(`nome_anuncio.ilike.%${term}%,placa.ilike.%${term}%`);
+    }
+
+    if (statusFilter) {
+      vehiclesQuery = vehiclesQuery.eq("status", statusFilter);
+    }
+
+    if (loteFilter === "sem-lote") {
+      vehiclesQuery = vehiclesQuery.is("lote_id", null);
+    } else if (loteFilter) {
+      vehiclesQuery = vehiclesQuery.eq("lote_id", loteFilter);
+    }
+
+    vehiclesQuery = loteFilter && loteFilter !== "sem-lote"
+      ? vehiclesQuery.order("posicao_lote", { ascending: true }).range(from, to)
+      : vehiclesQuery.order("created_at", { ascending: false }).range(from, to);
+
     const [veiculosResult, foundGroupsResult, linksResult, lotesResult] = await Promise.all([
-      supabase.from("veiculos").select("*").order("created_at", { ascending: false }),
+      vehiclesQuery,
       supabase
         .from("id_dos_grupos")
         .select("*")
@@ -114,6 +117,7 @@ export function VeiculosList() {
       setMessage(veiculosResult.error.message);
     } else {
       setVeiculos(veiculosResult.data ?? []);
+      setTotalVehicles(veiculosResult.count ?? 0);
     }
 
     if (foundGroupsResult.error) {
@@ -131,15 +135,34 @@ export function VeiculosList() {
     if (lotesResult.error) {
       setMessage(lotesResult.error.message);
     } else {
-      setLotes(lotesResult.data ?? []);
+      const loadedLotes = lotesResult.data ?? [];
+      setLotes(loadedLotes);
+
+      const countResults = await Promise.all(
+        loadedLotes.map((lote) =>
+          supabase
+            .from("veiculos")
+            .select("id", { count: "exact", head: true })
+            .eq("lote_id", lote.id)
+        )
+      );
+      const counts: Record<string, number> = {};
+      loadedLotes.forEach((lote, index) => {
+        counts[lote.id] = countResults[index].count ?? 0;
+      });
+      setVehicleCountByLote(counts);
     }
 
     setLoading(false);
-  }, [supabase]);
+  }, [currentPage, loteFilter, searchTerm, statusFilter, supabase]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [loteFilter, searchTerm, statusFilter]);
 
   useEffect(() => {
     const channel = supabase
@@ -147,29 +170,12 @@ export function VeiculosList() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "veiculos" },
-        (payload) => {
-          if (payload.eventType === "INSERT") {
-            const newVehicle = payload.new as Veiculo;
-            setVeiculos((current) => [newVehicle, ...current.filter((v) => v.id !== newVehicle.id)]);
-            return;
-          }
-          if (payload.eventType === "UPDATE") {
-            const updatedVehicle = payload.new as Veiculo;
-            setVeiculos((current) =>
-              current.map((v) => (v.id === updatedVehicle.id ? updatedVehicle : v))
-            );
-            return;
-          }
-          if (payload.eventType === "DELETE") {
-            const deletedVehicle = payload.old as Pick<Veiculo, "id">;
-            setVeiculos((current) => current.filter((v) => v.id !== deletedVehicle.id));
-          }
-        }
+        () => { void loadData(); }
       )
       .subscribe();
 
     return () => { void supabase.removeChannel(channel); };
-  }, [supabase]);
+  }, [loadData, supabase]);
 
   useEffect(() => {
     const channel = supabase
@@ -256,14 +262,29 @@ export function VeiculosList() {
       .eq("id", editing.id);
 
     if (error) { setMessage(error.message); return; }
+    await registrarLogComCliente(
+      supabase,
+      `Usuario editou o anuncio [${editForm.nome_anuncio}]`,
+      "anuncio",
+      editing.id,
+      { antes: { nome_anuncio: editing.nome_anuncio }, depois: editForm }
+    );
     setEditing(null);
     setEditForm(null);
     await loadData();
   }
 
   async function deleteVeiculo(id: string) {
+    const veiculo = veiculos.find((item) => item.id === id);
     const { error } = await supabase.from("veiculos").delete().eq("id", id);
     if (error) { setMessage(error.message); return; }
+    await registrarLogComCliente(
+      supabase,
+      `Usuario excluiu o veiculo [${veiculo?.nome_anuncio ?? id}]`,
+      "veiculo",
+      id,
+      { nome_anuncio: veiculo?.nome_anuncio, placa: veiculo?.placa }
+    );
     setVeiculos((current) => current.filter((v) => v.id !== id));
     setOpenMenu(null);
   }
@@ -284,6 +305,15 @@ export function VeiculosList() {
       await loadData();
       return;
     }
+
+    const veiculoAtualizado = veiculos.find((v) => v.id === id);
+    await registrarLogComCliente(
+      supabase,
+      `Usuario atualizou o status do anuncio [${veiculoAtualizado?.nome_anuncio ?? id}] para [${STATUS_CONFIG[status].label}]`,
+      "anuncio",
+      id,
+      { status }
+    );
 
     if (status === "vendido") {
       const veiculo = veiculos.find((v) => v.id === id);
@@ -337,8 +367,10 @@ export function VeiculosList() {
     const { error } = await supabase.from("lotes").insert({ user_id: user.id, nome });
     if (error) { setMessage(error.message); return; }
 
+    await registrarLogComCliente(supabase, `Usuario criou o lote [${nome}]`, "lote", nome, { nome });
     setNewLoteName("");
     setCreatingLote(false);
+    await loadData();
   }
 
   async function toggleLoteDaVez(loteId: string, isDaVez: boolean) {
@@ -360,7 +392,29 @@ export function VeiculosList() {
       .from("lotes")
       .update({ lote_da_vez: isDaVez })
       .eq("id", loteId);
-    if (error) { setMessage(error.message); await loadData(); }
+    if (error) { setMessage(error.message); await loadData(); return; }
+
+    const lote = lotes.find((item) => item.id === loteId);
+    await registrarLogComCliente(
+      supabase,
+      `Usuario ${isDaVez ? "marcou" : "removeu"} o lote [${lote?.nome ?? loteId}] como proximo disparo`,
+      "lote",
+      loteId,
+      { lote_da_vez: isDaVez }
+    );
+  }
+
+  async function fetchLoteVehicles(loteId: string | null) {
+    let query = supabase
+      .from("veiculos")
+      .select("*")
+      .order("posicao_lote", { ascending: true });
+
+    query = loteId ? query.eq("lote_id", loteId) : query.is("lote_id", null);
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []) as Veiculo[];
   }
 
   async function moveVehicleToLote(veiculo: Veiculo, targetLoteId: string | null) {
@@ -378,7 +432,7 @@ export function VeiculosList() {
 
         // Renumber old lote
         if (oldLoteId) {
-          const oldLoteVehicles = veiculos
+          const oldLoteVehicles = (await fetchLoteVehicles(oldLoteId))
             .filter((v) => v.lote_id === oldLoteId && v.id !== veiculo.id)
             .sort((a, b) => (a.posicao_lote ?? 0) - (b.posicao_lote ?? 0));
           oldLoteVehicles.forEach((v, idx) => {
@@ -387,7 +441,7 @@ export function VeiculosList() {
         }
       } else {
         // Vehicles currently in target lote, excluding the moving vehicle
-        let inTarget = veiculos
+        let inTarget = (await fetchLoteVehicles(targetLoteId))
           .filter((v) => v.lote_id === targetLoteId && v.id !== veiculo.id)
           .sort((a, b) => (a.posicao_lote ?? 0) - (b.posicao_lote ?? 0));
 
@@ -407,7 +461,7 @@ export function VeiculosList() {
           }
 
           // Place bumped in next lote
-          const inNext = veiculos
+          const inNext = (await fetchLoteVehicles(nextLote.id))
             .filter((v) => v.lote_id === nextLote.id && v.id !== bumped.id)
             .sort((a, b) => (a.posicao_lote ?? 0) - (b.posicao_lote ?? 0));
 
@@ -427,7 +481,7 @@ export function VeiculosList() {
 
         // Renumber old lote if vehicle was in a different lote
         if (veiculo.lote_id && veiculo.lote_id !== targetLoteId) {
-          const oldLoteVehicles = veiculos
+          const oldLoteVehicles = (await fetchLoteVehicles(veiculo.lote_id))
             .filter((v) => v.lote_id === veiculo.lote_id && v.id !== veiculo.id)
             .sort((a, b) => (a.posicao_lote ?? 0) - (b.posicao_lote ?? 0));
           oldLoteVehicles.forEach((v, idx) => {
@@ -448,6 +502,13 @@ export function VeiculosList() {
       const updateError = results.find((r) => r.error)?.error;
       if (updateError) { setMessage(updateError.message); return; }
 
+      await registrarLogComCliente(
+        supabase,
+        `Usuario moveu o veiculo [${veiculo.nome_anuncio}] para ${targetLoteId ? "um lote" : "sem lote"}`,
+        "veiculo",
+        veiculo.id,
+        { lote_anterior: veiculo.lote_id, lote_destino: targetLoteId, registros_atualizados: deduped.length }
+      );
       setMovingVehicle(null);
       await loadData();
     } finally {
@@ -494,6 +555,13 @@ export function VeiculosList() {
         if (error) throw error;
       }
 
+      await registrarLogComCliente(
+        supabase,
+        `Usuario atualizou os grupos do anuncio [${groupVehicle.nome_anuncio}]`,
+        "anuncio_grupos",
+        vehicleId,
+        { adicionados: groupIdsToInsert, removidos: linksToDelete.map((link) => link.grupo_id) }
+      );
       setGroupVehicle(null);
       setCurrentVehicleLinks([]);
       setSelectedGroupIds([]);
@@ -530,6 +598,13 @@ export function VeiculosList() {
       setProgramModal("Anuncio programado! Vincule um grupo para acompanhar a divulgacao.");
     }
 
+    await registrarLogComCliente(
+      supabase,
+      `Usuario programou o anuncio [${veiculo.nome_anuncio}]`,
+      "anuncio",
+      veiculo.id,
+      { grupos: linkedGroups.map((grupo) => grupo.id), programado_em: now }
+    );
     await loadData();
   }
 
@@ -661,29 +736,38 @@ export function VeiculosList() {
 
       {loading ? (
         <div className="app-card p-6 text-sm text-app-muted">Carregando veiculos...</div>
-      ) : filteredVeiculos.length === 0 ? (
+      ) : veiculos.length === 0 ? (
         <div className="app-card p-6 text-sm text-app-muted">
-          {veiculos.length === 0 ? "Nenhum veiculo cadastrado." : "Nenhum veiculo encontrado com os filtros aplicados."}
+          {hasActiveFilters ? "Nenhum veiculo encontrado com os filtros aplicados." : "Nenhum veiculo cadastrado."}
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {filteredVeiculos.map((veiculo) => (
-            <VehicleCard
-              key={veiculo.id}
-              veiculo={veiculo}
-              linkedGroups={linkedGroupsByVehicle[veiculo.id] ?? []}
-              loteInfo={veiculo.lote_id ? { nome: loteById.get(veiculo.lote_id)?.nome ?? "Lote", posicao: veiculo.posicao_lote } : null}
-              menuOpen={openMenu === veiculo.id}
-              onToggleMenu={() => setOpenMenu(openMenu === veiculo.id ? null : veiculo.id)}
-              onEdit={() => beginEdit(veiculo)}
-              onDelete={() => deleteVeiculo(veiculo.id)}
-              onGroups={() => { setGroupVehicle(veiculo); setOpenMenu(null); }}
-              onProgram={() => { void programVehicle(veiculo); }}
-              onStatusChange={(status) => void updateVehicleStatus(veiculo.id, status)}
-              onMoverLote={() => { setMovingVehicle(veiculo); setOpenMenu(null); }}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {veiculos.map((veiculo) => (
+              <VehicleCard
+                key={veiculo.id}
+                veiculo={veiculo}
+                linkedGroups={linkedGroupsByVehicle[veiculo.id] ?? []}
+                loteInfo={veiculo.lote_id ? { nome: loteById.get(veiculo.lote_id)?.nome ?? "Lote", posicao: veiculo.posicao_lote } : null}
+                menuOpen={openMenu === veiculo.id}
+                onToggleMenu={() => setOpenMenu(openMenu === veiculo.id ? null : veiculo.id)}
+                onEdit={() => beginEdit(veiculo)}
+                onDelete={() => deleteVeiculo(veiculo.id)}
+                onGroups={() => { setGroupVehicle(veiculo); setOpenMenu(null); }}
+                onProgram={() => { void programVehicle(veiculo); }}
+                onStatusChange={(status) => void updateVehicleStatus(veiculo.id, status)}
+                onMoverLote={() => { setMovingVehicle(veiculo); setOpenMenu(null); }}
+              />
+            ))}
+          </div>
+
+          <PaginationControls
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalVehicles}
+            onPageChange={setCurrentPage}
+          />
+        </>
       )}
 
       {editing && editForm ? (
@@ -913,6 +997,68 @@ function MoverLoteModal({
         </button>
       </div>
     </Modal>
+  );
+}
+
+function PaginationControls({
+  currentPage,
+  totalPages,
+  totalItems,
+  onPageChange
+}: {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalPages <= 1) {
+    return (
+      <p className="mt-4 text-sm text-app-muted">
+        {totalItems} veiculo{totalItems !== 1 ? "s" : ""} encontrado{totalItems !== 1 ? "s" : ""}.
+      </p>
+    );
+  }
+
+  const pages = Array.from({ length: totalPages }, (_, index) => index + 1);
+
+  return (
+    <div className="mt-6 flex flex-col gap-3 rounded-md border border-app-border bg-app-panel p-3 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-sm text-app-muted">
+        Pagina {currentPage} de {totalPages} - {totalItems} veiculo{totalItems !== 1 ? "s" : ""}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="rounded-md border border-app-border px-3 py-2 text-sm font-semibold text-app-muted transition hover:border-app-green hover:text-app-green disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={currentPage === 1}
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+        >
+          Anterior
+        </button>
+        {pages.map((page) => (
+          <button
+            key={page}
+            type="button"
+            className={`rounded-md border px-3 py-2 text-sm font-semibold transition ${
+              page === currentPage
+                ? "border-app-green bg-app-green/10 text-app-green"
+                : "border-app-border text-app-muted hover:border-app-green hover:text-app-green"
+            }`}
+            onClick={() => onPageChange(page)}
+          >
+            {page}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="rounded-md border border-app-border px-3 py-2 text-sm font-semibold text-app-muted transition hover:border-app-green hover:text-app-green disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={currentPage === totalPages}
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+        >
+          Proxima
+        </button>
+      </div>
+    </div>
   );
 }
 

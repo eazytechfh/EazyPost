@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Search, Trash2 } from "lucide-react";
+import { registrarLogComCliente } from "@/lib/audit-log";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import type { IdDosGrupos } from "@/types/database";
 import { SectionHeader } from "./section-header";
@@ -190,6 +191,13 @@ export function GruposManager() {
 
       setGroupIdResults(results);
       setMessage("Busca de IDs concluida.");
+      await registrarLogComCliente(
+        supabase,
+        `Usuario solicitou cadastro/busca do grupo [${groupNames.join(", ")}]`,
+        "grupo",
+        groupNames.join(", "),
+        { grupos: groupNames, resultados: results }
+      );
     } catch (error) {
       setGroupIdResults(
         groupNames.map((name) => ({
@@ -205,6 +213,7 @@ export function GruposManager() {
   }
 
   async function deleteSavedGroupId(id: string) {
+    const grupo = savedGroupIds.find((item) => item.id === id);
     const { error } = await supabase.from("id_dos_grupos").delete().eq("id", id);
 
     if (error) {
@@ -212,6 +221,13 @@ export function GruposManager() {
       return;
     }
 
+    await registrarLogComCliente(
+      supabase,
+      `Usuario excluiu o grupo [${grupo?.nome_do_grupo ?? id}]`,
+      "grupo",
+      id,
+      { nome_do_grupo: grupo?.nome_do_grupo, id_do_grupo: grupo?.id_do_grupo }
+    );
     setSavedGroupIds((current) => current.filter((group) => group.id !== id));
   }
 

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Car, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
+import { Car, ClipboardList, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
@@ -45,7 +45,8 @@ const navItems = [
 ];
 
 const adminNavItems = [
-  { href: "/dashboard/admin", label: "Usuários", icon: Users }
+  { href: "/dashboard/admin", label: "Usuários", icon: Users },
+  { href: "/dashboard/logs", label: "Logs", icon: ClipboardList }
 ];
 
 // ---------------------------------------------------------------------------

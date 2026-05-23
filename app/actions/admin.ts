@@ -2,6 +2,7 @@
 
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { registrarLogComCliente } from "@/lib/audit-log";
 
 type ActionResult<T> = { data: T; error?: never } | { data?: never; error: string };
 
@@ -86,6 +87,14 @@ export async function createUserAction(
 
   if (error || !data.user) return { error: error?.message ?? "Erro ao criar usuario." };
 
+  await registrarLogComCliente(
+    createSupabaseServerClient(),
+    `Usuario criou o usuario [${data.user.email ?? email}]`,
+    "usuario",
+    data.user.id,
+    { email: data.user.email ?? email }
+  );
+
   return { data: { id: data.user.id, email: data.user.email ?? email } };
 }
 
@@ -107,6 +116,13 @@ export async function deleteUserAction(userId: string): Promise<ActionResult<boo
   const admin = createSupabaseAdminClient();
   const { error } = await admin.auth.admin.deleteUser(userId);
   if (error) return { error: error.message };
+
+  await registrarLogComCliente(
+    createSupabaseServerClient(),
+    "Usuario removeu um usuario",
+    "usuario",
+    userId
+  );
 
   return { data: true };
 }
@@ -136,5 +152,12 @@ export async function toggleAdminAction(
     .eq("id", userId);
 
   if (error) return { error: error.message };
+  await registrarLogComCliente(
+    createSupabaseServerClient(),
+    `Usuario ${makeAdmin ? "tornou" : "removeu"} permissao admin de um usuario`,
+    "usuario",
+    userId,
+    { is_admin: makeAdmin }
+  );
   return { data: true };
 }

@@ -325,3 +325,37 @@ create policy "wapp_update_authenticated"
 create policy "wapp_delete_authenticated"
   on public.whatsapp_instancias for delete
   using (auth.role() = 'authenticated');
+
+-- ---------------------------------------------------------------------------
+-- Logs de auditoria
+-- ---------------------------------------------------------------------------
+create table if not exists public.logs_auditoria (
+  id uuid primary key default gen_random_uuid(),
+  user_email text,
+  user_id uuid references public.profiles(id) on delete set null,
+  acao text not null,
+  entidade text not null,
+  entidade_id text,
+  detalhes jsonb,
+  created_at timestamp with time zone default now()
+);
+
+alter table public.logs_auditoria enable row level security;
+
+drop policy if exists "logs_insert_authenticated" on public.logs_auditoria;
+drop policy if exists "logs_select_admin" on public.logs_auditoria;
+
+create policy "logs_insert_authenticated"
+  on public.logs_auditoria for insert
+  with check (auth.role() = 'authenticated' and auth.uid() = user_id);
+
+create policy "logs_select_admin"
+  on public.logs_auditoria for select
+  using (
+    exists (
+      select 1
+      from public.profiles
+      where profiles.id = auth.uid()
+        and profiles.is_admin = true
+    )
+  );
