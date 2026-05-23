@@ -17,9 +17,9 @@ type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor
 
 type LinkedGroupsByVehicle = Record<string, IdDosGrupos[]>;
 
-type VehicleStatus = "pendente" | "ativo" | "inativo" | "vendido" | "devolvido";
+type VehicleStatus = "pendente" | "ativo" | "inativo" | "vendido" | "devolvido" | "enviado";
 
-const ALL_STATUSES: VehicleStatus[] = ["pendente", "ativo", "inativo", "vendido", "devolvido"];
+const ALL_STATUSES: VehicleStatus[] = ["pendente", "ativo", "inativo", "vendido", "devolvido", "enviado"];
 
 const STATUS_CONFIG: Record<VehicleStatus, { label: string; badge: string; dot: string; chip: string; activeChip: string }> = {
   pendente:  { label: "Pendente",  badge: "border-yellow-500 text-yellow-300",  dot: "bg-yellow-400",  chip: "border-app-border text-app-muted hover:border-yellow-500 hover:text-yellow-300",   activeChip: "border-yellow-500 text-yellow-300 bg-yellow-500/10" },
@@ -27,6 +27,7 @@ const STATUS_CONFIG: Record<VehicleStatus, { label: string; badge: string; dot: 
   inativo:   { label: "Inativo",   badge: "border-gray-500 text-gray-400",      dot: "bg-gray-400",    chip: "border-app-border text-app-muted hover:border-gray-500 hover:text-gray-400",       activeChip: "border-gray-500 text-gray-400 bg-gray-500/10" },
   vendido:   { label: "Vendido",   badge: "border-blue-500 text-blue-400",      dot: "bg-blue-400",    chip: "border-app-border text-app-muted hover:border-blue-500 hover:text-blue-400",       activeChip: "border-blue-500 text-blue-400 bg-blue-500/10" },
   devolvido: { label: "Devolvido", badge: "border-orange-500 text-orange-400",  dot: "bg-orange-400",  chip: "border-app-border text-app-muted hover:border-orange-500 hover:text-orange-400",   activeChip: "border-orange-500 text-orange-400 bg-orange-500/10" },
+  enviado:   { label: "Enviado",   badge: "border-purple-500 text-purple-400",  dot: "bg-purple-400",  chip: "border-app-border text-app-muted hover:border-purple-500 hover:text-purple-400",   activeChip: "border-purple-500 text-purple-400 bg-purple-500/10" },
 };
 
 function computeInsertIndex(veiculo: Veiculo, sorted: Veiculo[]): number {
