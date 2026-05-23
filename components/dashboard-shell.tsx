@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Car, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Timer, Users } from "lucide-react";
+import { Car, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
@@ -40,7 +40,8 @@ async function tryFireWebhook(): Promise<void> {
 const navItems = [
   { href: "/dashboard/anuncio", label: "Cadastrar Anuncio", icon: PlusCircle },
   { href: "/dashboard/veiculos", label: "Lista de Veiculos", icon: Car },
-  { href: "/dashboard/grupos", label: "Grupos", icon: MessageCircle }
+  { href: "/dashboard/grupos", label: "Grupos", icon: MessageCircle },
+  { href: "/dashboard/whatsapp", label: "Conectar WhatsApp", icon: Smartphone }
 ];
 
 const adminNavItems = [
@@ -347,7 +348,7 @@ export function DashboardShell({
             </button>
           </div>
         </div>
-        <nav className={`grid gap-2 ${isAdmin ? "grid-cols-4" : "grid-cols-3"}`}>
+        <nav className={`grid gap-2 ${isAdmin ? "grid-cols-5" : "grid-cols-4"}`}>
           {[...navItems, ...(isAdmin ? adminNavItems : [])].map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;

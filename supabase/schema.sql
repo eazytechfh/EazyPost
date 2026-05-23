@@ -289,3 +289,39 @@ create policy "storage_delete_own_veiculos"
     bucket_id = 'veiculos-imagens'
     and auth.uid()::text = (storage.foldername(name))[1]
   );
+
+-- ---------------------------------------------------------------------------
+-- Tabela de instâncias WhatsApp (UAZAPI)
+-- ---------------------------------------------------------------------------
+create table if not exists public.whatsapp_instancias (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete cascade,
+  nome text not null,
+  token text not null,
+  status text not null default 'desconectado',
+  created_at timestamp with time zone default now()
+);
+
+alter table public.whatsapp_instancias enable row level security;
+
+drop policy if exists "wapp_select_authenticated" on public.whatsapp_instancias;
+drop policy if exists "wapp_insert_own" on public.whatsapp_instancias;
+drop policy if exists "wapp_update_authenticated" on public.whatsapp_instancias;
+drop policy if exists "wapp_delete_authenticated" on public.whatsapp_instancias;
+
+create policy "wapp_select_authenticated"
+  on public.whatsapp_instancias for select
+  using (auth.role() = 'authenticated');
+
+create policy "wapp_insert_own"
+  on public.whatsapp_instancias for insert
+  with check (auth.uid() = user_id);
+
+create policy "wapp_update_authenticated"
+  on public.whatsapp_instancias for update
+  using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');
+
+create policy "wapp_delete_authenticated"
+  on public.whatsapp_instancias for delete
+  using (auth.role() = 'authenticated');

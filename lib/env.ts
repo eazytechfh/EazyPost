@@ -27,3 +27,15 @@ export function getSupabaseServiceRoleKey() {
 
   return key;
 }
+
+export function getUazapiBaseUrl() {
+  const url = process.env.UAZAPI_BASE_URL;
+  if (!url) throw new Error("UAZAPI_BASE_URL nao configurada.");
+  return url.replace(/\/$/, "");
+}
+
+export function getUazapiToken() {
+  const token = process.env.UAZAPI_TOKEN;
+  if (!token) throw new Error("UAZAPI_TOKEN nao configurado.");
+  return token;
+}

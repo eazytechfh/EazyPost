@@ -52,6 +52,15 @@ export type AnuncioGrupo = {
   created_at: string;
 } & Record<string, unknown>;
 
+export type WhatsappInstancia = {
+  id: string;
+  user_id: string;
+  nome: string;
+  token: string;
+  status: string;
+  created_at: string;
+} & Record<string, unknown>;
+
 export type Database = {
   public: {
     Tables: {
@@ -103,6 +112,16 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<Omit<Lote, "id" | "user_id" | "created_at">>;
+        Relationships: [];
+      };
+      whatsapp_instancias: {
+        Row: WhatsappInstancia;
+        Insert: Omit<WhatsappInstancia, "id" | "created_at" | "status"> & {
+          id?: string;
+          status?: string;
+          created_at?: string;
+        };
+        Update: Partial<Omit<WhatsappInstancia, "id" | "user_id" | "created_at">>;
         Relationships: [];
       };
     };
