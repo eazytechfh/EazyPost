@@ -39,6 +39,9 @@ alter table public.veiculos add column if not exists posicao_lote integer not nu
 
 alter table public.lotes add column if not exists lote_da_vez boolean not null default false;
 
+-- Coluna de admin no perfil
+alter table public.profiles add column if not exists is_admin boolean not null default false;
+
 -- Tabela global de configuração do timer de disparo (uma única linha, id=1)
 create table if not exists public.dispatch_config (
   id integer primary key,

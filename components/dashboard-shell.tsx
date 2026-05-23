@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Car, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Timer } from "lucide-react";
+import { Car, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Timer, Users } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
@@ -41,6 +41,10 @@ const navItems = [
   { href: "/dashboard/anuncio", label: "Cadastrar Anuncio", icon: PlusCircle },
   { href: "/dashboard/veiculos", label: "Lista de Veiculos", icon: Car },
   { href: "/dashboard/grupos", label: "Grupos", icon: MessageCircle }
+];
+
+const adminNavItems = [
+  { href: "/dashboard/admin", label: "Usuários", icon: Users }
 ];
 
 // ---------------------------------------------------------------------------
@@ -113,10 +117,12 @@ function CountdownTimer({
 // ---------------------------------------------------------------------------
 export function DashboardShell({
   children,
-  userEmail
+  userEmail,
+  isAdmin = false
 }: {
   children: React.ReactNode;
   userEmail: string;
+  isAdmin?: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -298,6 +304,29 @@ export function DashboardShell({
               </Link>
             );
           })}
+          {isAdmin ? (
+            <>
+              <div className="my-2 border-t border-app-border" />
+              {adminNavItems.map((item) => {
+                const Icon = item.icon;
+                const active = pathname === item.href;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`flex items-center gap-3 rounded-md border px-3 py-3 text-sm font-semibold transition ${
+                      active
+                        ? "border-yellow-500 bg-app-card text-yellow-400"
+                        : "border-transparent text-app-muted hover:border-app-border hover:text-app-white"
+                    }`}
+                  >
+                    <Icon size={18} />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </>
+          ) : null}
         </nav>
 
         <button onClick={handleLogout} className="app-button-secondary absolute bottom-5 left-5 right-5">
@@ -318,8 +347,8 @@ export function DashboardShell({
             </button>
           </div>
         </div>
-        <nav className="grid grid-cols-3 gap-2">
-          {navItems.map((item) => {
+        <nav className={`grid gap-2 ${isAdmin ? "grid-cols-4" : "grid-cols-3"}`}>
+          {[...navItems, ...(isAdmin ? adminNavItems : [])].map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;
             return (

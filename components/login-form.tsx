@@ -2,13 +2,12 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LockKeyhole, Mail } from "lucide-react";
+import { LockKeyhole, Loader2, Mail } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 
 export function LoginForm() {
   const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -19,15 +18,12 @@ export function LoginForm() {
     setLoading(true);
     setMessage("");
 
-    const result =
-      mode === "login"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     setLoading(false);
 
-    if (result.error) {
-      setMessage(result.error.message);
+    if (error) {
+      setMessage("Email ou senha incorretos.");
       return;
     }
 
@@ -45,27 +41,6 @@ export function LoginForm() {
           <p className="mt-2 text-sm text-app-muted">Anuncios de veiculos para grupos WhatsApp</p>
         </div>
 
-        <div className="mb-6 grid grid-cols-2 rounded-md border border-app-border bg-app-card p-1">
-          <button
-            type="button"
-            onClick={() => setMode("login")}
-            className={`rounded-md px-3 py-2 text-sm font-bold transition ${
-              mode === "login" ? "bg-app-green text-app-black" : "text-app-muted"
-            }`}
-          >
-            Login
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("signup")}
-            className={`rounded-md px-3 py-2 text-sm font-bold transition ${
-              mode === "signup" ? "bg-app-green text-app-black" : "text-app-muted"
-            }`}
-          >
-            Cadastro
-          </button>
-        </div>
-
         <form onSubmit={handleSubmit} className="space-y-4">
           <label className="block space-y-2">
             <span className="app-label">Email</span>
@@ -78,6 +53,7 @@ export function LoginForm() {
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="voce@email.com"
                 required
+                autoFocus
               />
             </span>
           </label>
@@ -92,16 +68,21 @@ export function LoginForm() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 minLength={6}
-                placeholder="minimo 6 caracteres"
+                placeholder="sua senha"
                 required
               />
             </span>
           </label>
 
-          {message ? <p className="rounded-md border border-app-border bg-app-card p-3 text-sm text-app-muted">{message}</p> : null}
+          {message ? (
+            <p className="rounded-md border border-app-border bg-app-card p-3 text-sm text-app-muted">
+              {message}
+            </p>
+          ) : null}
 
           <button className="app-button w-full" disabled={loading}>
-            {loading ? "Processando..." : mode === "login" ? "Entrar" : "Criar conta"}
+            {loading ? <Loader2 className="animate-spin" size={18} /> : null}
+            {loading ? "Entrando..." : "Entrar"}
           </button>
         </form>
       </section>

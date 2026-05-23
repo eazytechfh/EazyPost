@@ -1,6 +1,7 @@
 export type Profile = {
   id: string;
   email: string;
+  is_admin: boolean;
   created_at: string;
 } & Record<string, unknown>;
 
@@ -59,6 +60,7 @@ export type Database = {
         Insert: {
           id: string;
           email: string;
+          is_admin?: boolean;
           created_at?: string;
         };
         Update: Partial<Profile>;
