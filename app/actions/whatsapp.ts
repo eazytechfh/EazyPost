@@ -13,28 +13,32 @@ type InstanciaRow = {
   created_at: string;
 };
 
-// Helpers UAZAPI -----------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Helpers UAZAPI
+// ---------------------------------------------------------------------------
 
-function uazapiHeaders(instanceToken: string) {
-  return {
-    "Content-Type": "application/json",
-    token: instanceToken
-  };
-}
-
-async function uazapiFetch(
+/**
+ * Requisição administrativa (criação de instâncias).
+ * Usa o header "admintoken" com o token global de admin da UAZAPI.
+ */
+async function uazapiAdmin(
   path: string,
   method: string,
-  token: string,
   body?: Record<string, unknown>
 ): Promise<{ ok: boolean; data: unknown; status: number }> {
   const base = getUazapiBaseUrl();
+  const adminToken = getUazapiToken();
+
   const res = await fetch(`${base}${path}`, {
     method,
-    headers: uazapiHeaders(token),
+    headers: {
+      "Content-Type": "application/json",
+      admintoken: adminToken
+    },
     body: body ? JSON.stringify(body) : undefined,
     cache: "no-store"
   });
+
   let data: unknown = null;
   try {
     data = await res.json();
@@ -44,9 +48,60 @@ async function uazapiFetch(
   return { ok: res.ok, data, status: res.status };
 }
 
-// --------------------------------------------------------------------------
+/**
+ * Requisição de instância específica.
+ * Usa o header "token" com o token individual da instância.
+ */
+async function uazapiInstance(
+  path: string,
+  method: string,
+  instanceToken: string,
+  body?: Record<string, unknown>
+): Promise<{ ok: boolean; data: unknown; status: number }> {
+  const base = getUazapiBaseUrl();
+
+  const res = await fetch(`${base}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      token: instanceToken
+    },
+    body: body ? JSON.stringify(body) : undefined,
+    cache: "no-store"
+  });
+
+  let data: unknown = null;
+  try {
+    data = await res.json();
+  } catch {
+    // resposta sem corpo
+  }
+  return { ok: res.ok, data, status: res.status };
+}
+
+function extractError(data: unknown, httpStatus: number): string {
+  const d = data as Record<string, unknown> | null;
+  return String(d?.message ?? d?.error ?? d?.msg ?? `HTTP ${httpStatus}`);
+}
+
+// ---------------------------------------------------------------------------
+// Buscar token de instância no banco
+// ---------------------------------------------------------------------------
+async function getInstanceToken(
+  supabase: ReturnType<typeof createSupabaseServerClient>,
+  instanciaId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("whatsapp_instancias")
+    .select("token")
+    .eq("id", instanciaId)
+    .single();
+  return (data as { token: string } | null)?.token ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Listar instâncias salvas no banco
-// --------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 export async function listarInstanciasAction(): Promise<ActionResult<InstanciaRow[]>> {
   const supabase = createSupabaseServerClient();
   const {
@@ -63,9 +118,9 @@ export async function listarInstanciasAction(): Promise<ActionResult<InstanciaRo
   return { data: (data ?? []) as InstanciaRow[] };
 }
 
-// --------------------------------------------------------------------------
-// Criar nova instância na UAZAPI e salvar no banco
-// --------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Criar nova instância — POST /instance/create com admintoken
+// ---------------------------------------------------------------------------
 export async function criarInstanciaAction(nome: string): Promise<ActionResult<InstanciaRow>> {
   const supabase = createSupabaseServerClient();
   const {
@@ -75,26 +130,27 @@ export async function criarInstanciaAction(nome: string): Promise<ActionResult<I
 
   if (!nome.trim()) return { error: "Nome da instancia obrigatorio." };
 
-  const globalToken = getUazapiToken();
-
-  // POST /instance — cria a instância na UAZAPI
-  const { ok, data, status } = await uazapiFetch("/instance", "POST", globalToken, { name: nome.trim() });
+  // POST /instance/create com admintoken
+  const { ok, data, status } = await uazapiAdmin("/instance/create", "POST", {
+    name: nome.trim()
+  });
 
   if (!ok) {
-    const msg = (data as Record<string, unknown>)?.message ?? (data as Record<string, unknown>)?.error ?? `HTTP ${status}`;
-    return { error: `UAZAPI: ${msg}` };
+    return { error: `UAZAPI: ${extractError(data, status)}` };
   }
 
-  // A UAZAPI retorna o token da instância (campo "token" ou "apikey" dependendo da versão)
+  // A UAZAPI retorna o token da instância em "token" ou "apikey"
   const payload = data as Record<string, unknown>;
   const instanceToken =
-    (payload.token as string) ??
-    (payload.apikey as string) ??
-    (payload.key as string) ??
+    (payload.token as string | undefined) ??
+    (payload.apikey as string | undefined) ??
+    (payload.key as string | undefined) ??
     "";
 
   if (!instanceToken) {
-    return { error: "UAZAPI nao retornou token da instancia." };
+    return {
+      error: `UAZAPI nao retornou token da instancia. Resposta: ${JSON.stringify(data)}`
+    };
   }
 
   // Salva no banco
@@ -114,9 +170,9 @@ export async function criarInstanciaAction(nome: string): Promise<ActionResult<I
   return { data: inserted as InstanciaRow };
 }
 
-// --------------------------------------------------------------------------
-// Conectar instância — retorna QR code base64
-// --------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Conectar instância — POST /instance/connect com token da instância
+// ---------------------------------------------------------------------------
 export async function conectarInstanciaAction(
   instanciaId: string
 ): Promise<ActionResult<{ qrcode: string }>> {
@@ -126,34 +182,29 @@ export async function conectarInstanciaAction(
   } = await supabase.auth.getUser();
   if (!user) return { error: "Nao autenticado." };
 
-  const { data: inst, error: fetchErr } = await supabase
-    .from("whatsapp_instancias")
-    .select("token")
-    .eq("id", instanciaId)
-    .single();
+  const instanceToken = await getInstanceToken(supabase, instanciaId);
+  if (!instanceToken) return { error: "Instancia nao encontrada." };
 
-  if (fetchErr || !inst) return { error: "Instancia nao encontrada." };
-
-  const token = (inst as { token: string }).token;
-
-  const { ok, data, status } = await uazapiFetch("/instance/connect", "POST", token);
+  const { ok, data, status } = await uazapiInstance("/instance/connect", "POST", instanceToken);
 
   if (!ok) {
-    const msg = (data as Record<string, unknown>)?.message ?? `HTTP ${status}`;
-    return { error: `UAZAPI: ${msg}` };
+    return { error: `UAZAPI: ${extractError(data, status)}` };
   }
 
   const payload = data as Record<string, unknown>;
-  // UAZAPI pode retornar "qrcode", "qr", "base64" etc.
   const qrcode =
-    (payload.qrcode as string) ??
-    (payload.qr as string) ??
-    (payload.base64 as string) ??
+    (payload.qrcode as string | undefined) ??
+    (payload.qr as string | undefined) ??
+    (payload.base64 as string | undefined) ??
+    (payload.qrCode as string | undefined) ??
     "";
 
-  if (!qrcode) return { error: "UAZAPI nao retornou QR code." };
+  if (!qrcode) {
+    return {
+      error: `UAZAPI nao retornou QR code. Resposta: ${JSON.stringify(data)}`
+    };
+  }
 
-  // Atualiza status para "aguardando"
   await supabase
     .from("whatsapp_instancias")
     .update({ status: "aguardando" })
@@ -162,9 +213,9 @@ export async function conectarInstanciaAction(
   return { data: { qrcode } };
 }
 
-// --------------------------------------------------------------------------
-// Verificar status da instância na UAZAPI
-// --------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Verificar status da instância — GET /instance/status com token da instância
+// ---------------------------------------------------------------------------
 export async function verificarStatusAction(
   instanciaId: string
 ): Promise<ActionResult<{ conectado: boolean; status: string }>> {
@@ -174,67 +225,52 @@ export async function verificarStatusAction(
   } = await supabase.auth.getUser();
   if (!user) return { error: "Nao autenticado." };
 
-  const { data: inst, error: fetchErr } = await supabase
-    .from("whatsapp_instancias")
-    .select("token")
-    .eq("id", instanciaId)
-    .single();
+  const instanceToken = await getInstanceToken(supabase, instanciaId);
+  if (!instanceToken) return { error: "Instancia nao encontrada." };
 
-  if (fetchErr || !inst) return { error: "Instancia nao encontrada." };
-
-  const token = (inst as { token: string }).token;
-
-  const { ok, data, status } = await uazapiFetch("/instance/status", "GET", token);
+  const { ok, data, status } = await uazapiInstance("/instance/status", "GET", instanceToken);
 
   if (!ok) {
-    const msg = (data as Record<string, unknown>)?.message ?? `HTTP ${status}`;
-    return { error: `UAZAPI: ${msg}` };
+    return { error: `UAZAPI: ${extractError(data, status)}` };
   }
 
   const payload = data as Record<string, unknown>;
-  // UAZAPI retorna "connected", "state", "status" — normaliza
-  const state =
+  const conectado =
     (payload.connected as boolean) === true ||
     (payload.state as string) === "open" ||
+    (payload.state as string) === "connected" ||
     (payload.status as string) === "connected" ||
     (payload.status as string) === "open";
 
-  const statusLabel = state ? "conectado" : "desconectado";
+  const statusLabel = conectado ? "conectado" : "desconectado";
 
-  // Sincroniza status no banco
   await supabase
     .from("whatsapp_instancias")
     .update({ status: statusLabel })
     .eq("id", instanciaId);
 
-  return { data: { conectado: state, status: statusLabel } };
+  return { data: { conectado, status: statusLabel } };
 }
 
-// --------------------------------------------------------------------------
-// Desconectar instância
-// --------------------------------------------------------------------------
-export async function desconectarInstanciaAction(instanciaId: string): Promise<ActionResult<boolean>> {
+// ---------------------------------------------------------------------------
+// Desconectar instância — POST /instance/disconnect com token da instância
+// ---------------------------------------------------------------------------
+export async function desconectarInstanciaAction(
+  instanciaId: string
+): Promise<ActionResult<boolean>> {
   const supabase = createSupabaseServerClient();
   const {
     data: { user }
   } = await supabase.auth.getUser();
   if (!user) return { error: "Nao autenticado." };
 
-  const { data: inst, error: fetchErr } = await supabase
-    .from("whatsapp_instancias")
-    .select("token")
-    .eq("id", instanciaId)
-    .single();
+  const instanceToken = await getInstanceToken(supabase, instanciaId);
+  if (!instanceToken) return { error: "Instancia nao encontrada." };
 
-  if (fetchErr || !inst) return { error: "Instancia nao encontrada." };
-
-  const token = (inst as { token: string }).token;
-
-  const { ok, data, status } = await uazapiFetch("/instance/disconnect", "POST", token);
+  const { ok, data, status } = await uazapiInstance("/instance/disconnect", "POST", instanceToken);
 
   if (!ok) {
-    const msg = (data as Record<string, unknown>)?.message ?? `HTTP ${status}`;
-    return { error: `UAZAPI: ${msg}` };
+    return { error: `UAZAPI: ${extractError(data, status)}` };
   }
 
   await supabase
@@ -245,28 +281,23 @@ export async function desconectarInstanciaAction(instanciaId: string): Promise<A
   return { data: true };
 }
 
-// --------------------------------------------------------------------------
-// Deletar instância (UAZAPI + banco)
-// --------------------------------------------------------------------------
-export async function deletarInstanciaAction(instanciaId: string): Promise<ActionResult<boolean>> {
+// ---------------------------------------------------------------------------
+// Deletar instância — DELETE /instance com token da instância + remove do banco
+// ---------------------------------------------------------------------------
+export async function deletarInstanciaAction(
+  instanciaId: string
+): Promise<ActionResult<boolean>> {
   const supabase = createSupabaseServerClient();
   const {
     data: { user }
   } = await supabase.auth.getUser();
   if (!user) return { error: "Nao autenticado." };
 
-  const { data: inst, error: fetchErr } = await supabase
-    .from("whatsapp_instancias")
-    .select("token")
-    .eq("id", instanciaId)
-    .single();
+  const instanceToken = await getInstanceToken(supabase, instanciaId);
+  if (!instanceToken) return { error: "Instancia nao encontrada." };
 
-  if (fetchErr || !inst) return { error: "Instancia nao encontrada." };
-
-  const token = (inst as { token: string }).token;
-
-  // Tenta deletar na UAZAPI (ignora erros — remove do banco de qualquer forma)
-  await uazapiFetch("/instance", "DELETE", token).catch(() => null);
+  // Tenta deletar na UAZAPI (ignora falha — remove do banco de qualquer forma)
+  await uazapiInstance("/instance", "DELETE", instanceToken).catch(() => null);
 
   const { error: dbErr } = await supabase
     .from("whatsapp_instancias")
