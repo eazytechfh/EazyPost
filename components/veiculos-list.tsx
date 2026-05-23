@@ -304,7 +304,10 @@ export function VeiculosList() {
             tipo: veiculo.tipo,
             status: "vendido",
             imagens: veiculo.imagens,
-            texto_anuncio: veiculo.texto_anuncio
+            texto_anuncio: veiculo.texto_anuncio,
+            grupos_ids: (linkedGroupsByVehicle[id] ?? [])
+              .map((g) => g.id_do_grupo)
+              .filter(Boolean)
           })
         }).catch((err) => console.error("Erro ao disparar webhook de venda:", err));
       }
