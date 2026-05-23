@@ -288,7 +288,7 @@ export function VeiculosList() {
     if (status === "vendido") {
       const veiculo = veiculos.find((v) => v.id === id);
       if (veiculo) {
-        fetch("https://eazytech-n8n.gsl3ku.easypanel.host/webhook/73b454b0-7617-406c-9781-e8ba77550d2d", {
+        fetch("https://n8n.eazy.tec.br/webhook/887a42e8-429f-423b-9b98-29d99da61015", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
