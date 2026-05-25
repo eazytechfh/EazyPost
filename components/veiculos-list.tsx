@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { CalendarClock, Check, Edit3, Layers, Loader2, MoreVertical, PackagePlus, Search, Trash2, Users, X, Zap } from "lucide-react";
+import { CalendarClock, Check, Edit3, Layers, Loader2, MoreVertical, Search, Trash2, Users, X, Zap } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { registrarLogComCliente } from "@/lib/audit-log";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
@@ -92,13 +92,11 @@ export function VeiculosList() {
       vehiclesQuery = vehiclesQuery.eq("status", statusFilter);
     }
 
-    if (loteFilter === "sem-lote") {
-      vehiclesQuery = vehiclesQuery.is("lote_id", null);
-    } else if (loteFilter) {
+    if (loteFilter) {
       vehiclesQuery = vehiclesQuery.eq("lote_id", loteFilter);
     }
 
-    vehiclesQuery = loteFilter && loteFilter !== "sem-lote"
+    vehiclesQuery = loteFilter
       ? vehiclesQuery.order("posicao_lote", { ascending: true }).range(from, to)
       : vehiclesQuery.order("created_at", { ascending: false }).range(from, to);
 
@@ -373,34 +371,33 @@ export function VeiculosList() {
     await loadData();
   }
 
-  async function toggleLoteDaVez(loteId: string, isDaVez: boolean) {
-    // Optimistic update
+  async function selecionarLoteDaVez(loteId: string) {
+    // Otimista: marca só o selecionado como true, todos os outros false
     setLotes((curr) =>
-      curr.map((l) => ({ ...l, lote_da_vez: isDaVez ? l.id === loteId : l.id === loteId ? false : l.lote_da_vez }))
+      curr.map((l) => ({ ...l, lote_da_vez: l.id === loteId }))
     );
 
-    if (isDaVez) {
-      // Clear all others first
-      const { error: clearError } = await supabase
-        .from("lotes")
-        .update({ lote_da_vez: false })
-        .neq("id", loteId);
-      if (clearError) { setMessage(clearError.message); await loadData(); return; }
-    }
+    // 1. Limpa TODOS os lotes
+    const { error: clearError } = await supabase
+      .from("lotes")
+      .update({ lote_da_vez: false })
+      .neq("id", "00000000-0000-0000-0000-000000000000"); // atualiza todos
+    if (clearError) { setMessage(clearError.message); await loadData(); return; }
 
+    // 2. Marca apenas o selecionado
     const { error } = await supabase
       .from("lotes")
-      .update({ lote_da_vez: isDaVez })
+      .update({ lote_da_vez: true })
       .eq("id", loteId);
     if (error) { setMessage(error.message); await loadData(); return; }
 
     const lote = lotes.find((item) => item.id === loteId);
     await registrarLogComCliente(
       supabase,
-      `Usuario ${isDaVez ? "marcou" : "removeu"} o lote [${lote?.nome ?? loteId}] como proximo disparo`,
+      `Usuario marcou o lote [${lote?.nome ?? loteId}] como proximo disparo`,
       "lote",
       loteId,
-      { lote_da_vez: isDaVez }
+      { lote_da_vez: true }
     );
   }
 
@@ -675,17 +672,6 @@ export function VeiculosList() {
           >
             Todos
           </button>
-          <button
-            type="button"
-            onClick={() => setLoteFilter(loteFilter === "sem-lote" ? null : "sem-lote")}
-            className={`rounded-md border px-3 py-1 text-xs font-semibold transition ${
-              loteFilter === "sem-lote"
-                ? "border-app-green text-app-green bg-app-green/10"
-                : "border-app-border text-app-muted hover:border-app-green hover:text-app-green"
-            }`}
-          >
-            Sem Lote
-          </button>
           {lotes.map((lote) => {
             const count = vehicleCountByLote[lote.id] ?? 0;
             const isActive = loteFilter === lote.id;
@@ -710,8 +696,8 @@ export function VeiculosList() {
                 </button>
                 <button
                   type="button"
-                  title={isDaVez ? "Remover como próximo disparo" : "Marcar como próximo disparo"}
-                  onClick={() => void toggleLoteDaVez(lote.id, !isDaVez)}
+                  title="Marcar como próximo disparo"
+                  onClick={() => void selecionarLoteDaVez(lote.id)}
                   className={`rounded-l-none rounded-r-md border border-l-0 p-1.5 transition ${
                     isDaVez
                       ? "border-yellow-500 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20"
@@ -723,14 +709,6 @@ export function VeiculosList() {
               </div>
             );
           })}
-          <button
-            type="button"
-            onClick={() => setCreatingLote(true)}
-            className="flex items-center gap-1.5 rounded-md border border-dashed border-app-border px-3 py-1 text-xs font-semibold text-app-muted transition hover:border-app-green hover:text-app-green"
-          >
-            <PackagePlus size={12} />
-            Novo Lote
-          </button>
         </div>
       </div>
 
@@ -849,30 +827,6 @@ export function VeiculosList() {
         />
       ) : null}
 
-      {creatingLote ? (
-        <Modal title="Novo Lote" onClose={() => { setCreatingLote(false); setNewLoteName(""); }}>
-          <form
-            onSubmit={(e) => { e.preventDefault(); void createLote(newLoteName); }}
-            className="space-y-4"
-          >
-            <label className="space-y-2 block">
-              <span className="app-label">Nome do Lote</span>
-              <input
-                className="app-input"
-                value={newLoteName}
-                onChange={(e) => setNewLoteName(e.target.value)}
-                placeholder="Ex: Lote 1"
-                required
-                autoFocus
-              />
-            </label>
-            <button className="app-button" type="submit">
-              <PackagePlus size={18} />
-              Criar Lote
-            </button>
-          </form>
-        </Modal>
-      ) : null}
     </section>
   );
 }
@@ -892,10 +846,10 @@ function MoverLoteModal({
   onMove: (targetLoteId: string | null) => void;
   onClose: () => void;
 }) {
-  const [selected, setSelected] = useState<string | "sem-lote">(veiculo.lote_id ?? "sem-lote");
+  const [selected, setSelected] = useState<string>(veiculo.lote_id ?? lotes[0]?.id ?? "");
 
   const currentLoteId = veiculo.lote_id;
-  const targetLoteId = selected === "sem-lote" ? null : selected;
+  const targetLoteId = selected || null;
 
   const willBump = useMemo(() => {
     if (!targetLoteId) return null;
@@ -915,21 +869,6 @@ function MoverLoteModal({
       <p className="mb-4 text-sm text-app-muted truncate">{veiculo.nome_anuncio}</p>
 
       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-        {/* Sem Lote option */}
-        <label className={`flex cursor-pointer items-center gap-3 rounded-md border p-3 transition ${
-          selected === "sem-lote" ? "border-app-green bg-app-green/5" : "border-app-border bg-app-card hover:border-app-green"
-        }`}>
-          <input
-            type="radio"
-            name="lote"
-            className="accent-app-green"
-            checked={selected === "sem-lote"}
-            onChange={() => setSelected("sem-lote")}
-          />
-          <span className="flex-1 text-sm font-semibold text-app-white">Sem Lote</span>
-          {!currentLoteId ? <span className="text-xs text-app-muted">atual</span> : null}
-        </label>
-
         {lotes.map((lote) => {
           const count = vehicleCountByLote[lote.id] ?? 0;
           const isFull = count >= LOTE_CAPACITY;
