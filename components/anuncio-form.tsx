@@ -2,9 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { ImagePlus, Loader2, Save } from "lucide-react";
+import { ImagePlus, Layers, Loader2, Save } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { cleanCurrencyInput, parseCurrencyInput } from "@/lib/format";
+import { criarAnuncioAction } from "@/app/actions/anuncio";
 import { registrarLogComCliente } from "@/lib/audit-log";
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
@@ -78,7 +79,7 @@ export function AnuncioForm() {
   const [form, setForm] = useState<FormState>(initialState);
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<{ text: string; lote?: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -137,7 +138,7 @@ export function AnuncioForm() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
-    setMessage("");
+    setMessage(null);
 
     const {
       data: { user },
@@ -145,57 +146,40 @@ export function AnuncioForm() {
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      if (userError) {
-        console.error("Erro ao buscar usuario autenticado:", userError);
-      }
-
-      setMessage(userError?.message ?? "Sessao expirada. Faca login novamente.");
+      setMessage({ text: userError?.message ?? "Sessao expirada. Faca login novamente." });
       setLoading(false);
       return;
     }
 
     try {
-      const { error: profileError } = await supabase.from("profiles").upsert({
-        id: user.id,
-        email: user.email ?? ""
+      // 1. Upload das imagens (client-side via Storage)
+      const imageUrls = await uploadImages(user.id);
+
+      // 2. Server action: insere veículo + auto-aloca em lote
+      const result = await criarAnuncioAction({
+        nome_anuncio: form.nome_anuncio,
+        quilometragem: form.quilometragem,
+        motor: form.motor,
+        valor: parseCurrencyInput(form.valor),
+        cor: form.cor,
+        fipe: form.fipe,
+        placa: `XXX-${form.placa}`,
+        tipo: form.tipo,
+        texto_anuncio: form.texto_anuncio,
+        imagens: imageUrls
       });
 
-      if (profileError) {
-        console.error("Erro ao garantir profile antes de cadastrar anuncio:", profileError);
-        throw profileError;
+      if (result.error) {
+        throw new Error(result.error);
       }
 
-      const imageUrls = await uploadImages(user.id);
-      const { data: inserted, error } = await supabase
-        .from("veiculos")
-        .insert({
-          user_id: user.id,
-          nome_anuncio: form.nome_anuncio,
-          quilometragem: form.quilometragem,
-          motor: form.motor,
-          valor: parseCurrencyInput(form.valor),
-          cor: form.cor,
-          fipe: form.fipe,
-          placa: `XXX-${form.placa}`,
-          tipo: form.tipo,
-          texto_anuncio: form.texto_anuncio,
-          imagens: imageUrls,
-          status: "pendente"
-        })
-        .select("id")
-        .single();
-
-      if (error) {
-        console.error("Erro ao inserir anuncio na tabela veiculos:", error);
-        throw error;
-      }
-
-      if (inserted) {
+      // 3. Audit log
+      if (result.data?.id) {
         await registrarLogComCliente(
           supabase,
           `Usuario ${user.email ?? ""} criou o anuncio [${form.nome_anuncio}]`,
           "anuncio",
-          inserted.id,
+          result.data.id,
           { nome_anuncio: form.nome_anuncio, placa: `XXX-${form.placa}` }
         );
       }
@@ -203,10 +187,10 @@ export function AnuncioForm() {
       setForm(initialState);
       setFiles([]);
       setPreviews([]);
-      setMessage("Anuncio cadastrado com sucesso.");
+      setMessage({ text: "Anuncio cadastrado com sucesso.", lote: result.data?.lote_nome });
     } catch (error) {
       console.error("Erro ao cadastrar anuncio:", error);
-      setMessage(getErrorMessage(error, "Nao foi possivel cadastrar o anuncio."));
+      setMessage({ text: getErrorMessage(error, "Nao foi possivel cadastrar o anuncio.") });
     } finally {
       setLoading(false);
     }
@@ -357,7 +341,17 @@ export function AnuncioForm() {
           ) : null}
         </div>
 
-        {message ? <p className="mt-5 rounded-md border border-app-border bg-app-panel p-3 text-sm text-app-muted">{message}</p> : null}
+        {message ? (
+          <div className="mt-5 rounded-md border border-app-border bg-app-panel p-3 text-sm text-app-muted">
+            <p>{message.text}</p>
+            {message.lote ? (
+              <p className="mt-1 flex items-center gap-1.5 font-semibold text-app-green">
+                <Layers size={13} />
+                Alocado em: {message.lote}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <button className="app-button mt-6" disabled={loading}>
           {loading ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
