@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { ImagePlus, Layers, Loader2, Save } from "lucide-react";
+import { AlertTriangle, ImagePlus, Layers, Loader2, Save, X } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { cleanCurrencyInput, parseCurrencyInput } from "@/lib/format";
 import { criarAnuncioAction } from "@/app/actions/anuncio";
@@ -10,6 +10,9 @@ import { registrarLogComCliente } from "@/lib/audit-log";
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
 
+// ---------------------------------------------------------------------------
+// Tipos
+// ---------------------------------------------------------------------------
 type FormState = {
   nome_anuncio: string;
   quilometragem: string;
@@ -20,9 +23,14 @@ type FormState = {
   placa: string;
   ano: string;
   tipo: string;
+  cambio: string;
+  local: string;
   texto_anuncio: string;
 };
 
+// ---------------------------------------------------------------------------
+// Template do anúncio
+// ---------------------------------------------------------------------------
 function buildAnuncioTemplate(fields: {
   nome_anuncio: string;
   fipe: string;
@@ -30,6 +38,8 @@ function buildAnuncioTemplate(fields: {
   ano: string;
   quilometragem: string;
   placa: string;
+  cambio: string;
+  local: string;
 }) {
   const nome = fields.nome_anuncio || "[Nome do Anúncio]";
   const fipe = fields.fipe || "[FIPE]";
@@ -40,6 +50,8 @@ function buildAnuncioTemplate(fields: {
   const ano = fields.ano || "[ANO]";
   const km = fields.quilometragem || "[KM]";
   const placa = fields.placa ? fields.placa.toUpperCase() : "[PLACA]";
+  const cambio = fields.cambio || "[CÂMBIO]";
+  const local = fields.local || "[LOCAL]";
 
   return `${nome}
 
@@ -47,7 +59,7 @@ function buildAnuncioTemplate(fields: {
 💰 VALOR: ${valorDisplay}
 
 ANO: ${ano} | KM: ${km}
-CÂMBIO:
+CÂMBIO: ${cambio}
 PNEUS: BONS
 PERÍCIA: APROVA ✅
 PLACA: XXX-${placa}
@@ -58,7 +70,7 @@ PAGAMENTO NO CARTÃO DE CRÉDITO EM ATÉ 24X, FINANCIAMENTO EM TODOS OS BANCOS, 
 
 VEÍCULOS PARA FORA DO ESTADO DO PARANÁ: ADICIONAL DE 1% DO VALOR DA VENDA PARA NF
 
-📍 CURITIBA`;
+📍 ${local}`;
 }
 
 const initialState: FormState = {
@@ -71,9 +83,27 @@ const initialState: FormState = {
   placa: "",
   ano: "",
   tipo: "aleatorio",
-  texto_anuncio: buildAnuncioTemplate({ nome_anuncio: "", fipe: "", valor: "", ano: "", quilometragem: "", placa: "" })
+  cambio: "",
+  local: "",
+  texto_anuncio: buildAnuncioTemplate({
+    nome_anuncio: "", fipe: "", valor: "", ano: "",
+    quilometragem: "", placa: "", cambio: "", local: ""
+  })
 };
 
+// ---------------------------------------------------------------------------
+// Formata o valor digitado para exibição no input (ex: 99900 → 99.900)
+// ---------------------------------------------------------------------------
+function formatValorDisplay(digits: string): string {
+  if (!digits) return "";
+  const num = Number(digits);
+  if (!Number.isFinite(num)) return digits;
+  return new Intl.NumberFormat("pt-BR").format(num);
+}
+
+// ---------------------------------------------------------------------------
+// Componente principal
+// ---------------------------------------------------------------------------
 export function AnuncioForm() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [form, setForm] = useState<FormState>(initialState);
@@ -81,9 +111,11 @@ export function AnuncioForm() {
   const [previews, setPreviews] = useState<string[]>([]);
   const [message, setMessage] = useState<{ text: string; lote?: string } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [placaDuplicada, setPlacaDuplicada] = useState(false);
 
+  // Atualiza texto do anúncio ao mudar campos relevantes
   useEffect(() => {
-    setForm(current => ({
+    setForm((current) => ({
       ...current,
       texto_anuncio: buildAnuncioTemplate({
         nome_anuncio: current.nome_anuncio,
@@ -91,11 +123,13 @@ export function AnuncioForm() {
         valor: current.valor,
         ano: current.ano,
         quilometragem: current.quilometragem,
-        placa: current.placa
+        placa: current.placa,
+        cambio: current.cambio,
+        local: current.local
       })
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa]);
+  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.cambio, form.local]);
 
   function updateField(field: keyof FormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -114,7 +148,6 @@ export function AnuncioForm() {
 
   async function uploadImages(userId: string) {
     const uploadedUrls: string[] = [];
-
     for (const file of files) {
       const extension = file.name.split(".").pop() ?? "jpg";
       const path = `${userId}/${crypto.randomUUID()}.${extension}`;
@@ -122,16 +155,10 @@ export function AnuncioForm() {
         cacheControl: "3600",
         upsert: false
       });
-
-      if (error) {
-        console.error("Erro ao enviar imagem para o Supabase Storage:", error);
-        throw error;
-      }
-
+      if (error) throw error;
       const { data } = supabase.storage.from("veiculos-imagens").getPublicUrl(path);
       uploadedUrls.push(data.publicUrl);
     }
-
     return uploadedUrls;
   }
 
@@ -152,10 +179,24 @@ export function AnuncioForm() {
     }
 
     try {
-      // 1. Upload das imagens (client-side via Storage)
+      // Verifica placa duplicada
+      const placaCompleta = `XXX-${form.placa}`;
+      const { data: existente } = await supabase
+        .from("veiculos")
+        .select("id")
+        .eq("placa", placaCompleta)
+        .maybeSingle();
+
+      if (existente) {
+        setPlacaDuplicada(true);
+        setLoading(false);
+        return;
+      }
+
+      // Upload das imagens
       const imageUrls = await uploadImages(user.id);
 
-      // 2. Server action: insere veículo + auto-aloca em lote
+      // Server action: insere veículo + auto-aloca em lote
       const result = await criarAnuncioAction({
         nome_anuncio: form.nome_anuncio,
         quilometragem: form.quilometragem,
@@ -163,24 +204,22 @@ export function AnuncioForm() {
         valor: parseCurrencyInput(form.valor),
         cor: form.cor,
         fipe: form.fipe,
-        placa: `XXX-${form.placa}`,
+        placa: placaCompleta,
         tipo: form.tipo,
         texto_anuncio: form.texto_anuncio,
         imagens: imageUrls
       });
 
-      if (result.error) {
-        throw new Error(result.error);
-      }
+      if (result.error) throw new Error(result.error);
 
-      // 3. Audit log
+      // Audit log
       if (result.data?.id) {
         await registrarLogComCliente(
           supabase,
           `Usuario ${user.email ?? ""} criou o anuncio [${form.nome_anuncio}]`,
           "anuncio",
           result.data.id,
-          { nome_anuncio: form.nome_anuncio, placa: `XXX-${form.placa}` }
+          { nome_anuncio: form.nome_anuncio, placa: placaCompleta }
         );
       }
 
@@ -196,6 +235,8 @@ export function AnuncioForm() {
     }
   }
 
+  const valorFormatado = formatValorDisplay(form.valor);
+
   return (
     <section>
       <SectionHeader
@@ -203,15 +244,38 @@ export function AnuncioForm() {
         description="Preencha os dados do veiculo e envie ate 4 imagens para o Supabase Storage."
       />
 
+      {/* Modal: placa duplicada */}
+      {placaDuplicada ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-sm rounded-lg border border-red-500/50 bg-app-panel p-6 text-center shadow-xl">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full border border-red-500/30 bg-red-500/10">
+              <AlertTriangle size={28} className="text-red-400" />
+            </div>
+            <h2 className="mb-1 text-lg font-bold text-app-white">PLACA JÁ CADASTRADA</h2>
+            <p className="text-sm text-app-muted">
+              A placa <span className="font-bold text-red-400">XXX-{form.placa}</span> já está registrada no sistema.
+              Verifique se o veículo já foi cadastrado antes de prosseguir.
+            </p>
+            <button
+              onClick={() => setPlacaDuplicada(false)}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-md border border-app-border bg-app-card py-2 text-sm font-semibold text-app-white hover:border-red-500 hover:text-red-400 transition"
+            >
+              <X size={15} />
+              Fechar e Corrigir
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <form onSubmit={handleSubmit} className="app-card max-w-5xl p-5">
         <div className="grid gap-4 md:grid-cols-2">
+
           <label className="space-y-2">
             <span className="app-label">Nome do Anuncio</span>
             <input
               className="app-input"
               value={form.nome_anuncio}
               onChange={(event) => updateField("nome_anuncio", event.target.value)}
-              placeholder="Fiesta 1.0 2005"
               required
             />
           </label>
@@ -222,7 +286,6 @@ export function AnuncioForm() {
               className="app-input"
               value={form.quilometragem}
               onChange={(event) => updateField("quilometragem", event.target.value)}
-              placeholder="120.000"
               required
             />
           </label>
@@ -233,7 +296,6 @@ export function AnuncioForm() {
               className="app-input"
               value={form.motor}
               onChange={(event) => updateField("motor", event.target.value)}
-              placeholder="1.0 Flex"
               required
             />
           </label>
@@ -244,8 +306,8 @@ export function AnuncioForm() {
               className="app-input"
               value={form.ano}
               onChange={(event) => updateField("ano", event.target.value)}
-              placeholder="2019"
               maxLength={4}
+              inputMode="numeric"
               required
             />
           </label>
@@ -256,10 +318,14 @@ export function AnuncioForm() {
               className="app-input"
               value={form.valor}
               onChange={(event) => updateField("valor", cleanCurrencyInput(event.target.value))}
-              placeholder="18950"
               inputMode="numeric"
               required
             />
+            {valorFormatado ? (
+              <p className="text-xs text-app-muted">
+                No anúncio: <span className="font-semibold text-app-green">{valorFormatado},00</span>
+              </p>
+            ) : null}
           </label>
 
           <label className="space-y-2">
@@ -268,9 +334,9 @@ export function AnuncioForm() {
               className="app-input"
               value={form.fipe}
               onChange={(event) => updateField("fipe", event.target.value)}
-              placeholder="R$ 120.000,00"
               required
             />
+            <p className="text-xs text-app-muted">Ex: 119.000,00</p>
           </label>
 
           <label className="space-y-2">
@@ -279,7 +345,16 @@ export function AnuncioForm() {
               className="app-input"
               value={form.cor}
               onChange={(event) => updateField("cor", event.target.value)}
-              placeholder="Prata"
+              required
+            />
+          </label>
+
+          <label className="space-y-2">
+            <span className="app-label">Câmbio</span>
+            <input
+              className="app-input"
+              value={form.cambio}
+              onChange={(event) => updateField("cambio", event.target.value)}
               required
             />
           </label>
@@ -298,8 +373,18 @@ export function AnuncioForm() {
           </label>
 
           <label className="space-y-2">
+            <span className="app-label">Local / Fornecedor</span>
+            <input
+              className="app-input"
+              value={form.local}
+              onChange={(event) => updateField("local", event.target.value)}
+              required
+            />
+          </label>
+
+          <label className="space-y-2 md:col-span-2">
             <span className="app-label">Placa</span>
-            <div className="flex">
+            <div className="flex max-w-xs">
               <span className="flex items-center rounded-l-md border border-r-0 border-app-border bg-app-panel px-3 text-sm text-app-muted select-none">
                 XXX-
               </span>
@@ -307,12 +392,12 @@ export function AnuncioForm() {
                 className="app-input rounded-l-none"
                 value={form.placa}
                 onChange={(event) => handlePlacaChange(event.target.value)}
-                placeholder="0000"
                 maxLength={4}
                 required
               />
             </div>
           </label>
+
         </div>
 
         <div className="mt-5 space-y-2">
@@ -363,13 +448,9 @@ export function AnuncioForm() {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
+  if (error instanceof Error) return error.message;
   if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
     return error.message;
   }
-
   return fallback;
 }
