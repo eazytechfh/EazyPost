@@ -251,18 +251,48 @@ export function DashboardShell({
 
   useEffect(() => {
     async function fetchProxLote() {
-      const { data } = await supabase
+      // Busca o lote com maior número de veículos ativos (mesma lógica da fila)
+      const { data: veiculosAtivos } = await supabase
+        .from("veiculos")
+        .select("lote_id")
+        .eq("status", "ativo")
+        .not("lote_id", "is", null);
+
+      if (!veiculosAtivos?.length) {
+        setProxLote(null);
+        return;
+      }
+
+      // Conta ativos por lote
+      const counts = new Map<string, number>();
+      for (const v of veiculosAtivos) {
+        const lid = (v as { lote_id: string }).lote_id;
+        counts.set(lid, (counts.get(lid) ?? 0) + 1);
+      }
+
+      // Lote com mais ativos
+      let topLoteId = "";
+      let maxCount = 0;
+      for (const [id, count] of counts) {
+        if (count > maxCount) { maxCount = count; topLoteId = id; }
+      }
+
+      const { data: lote } = await supabase
         .from("lotes")
         .select("nome")
-        .eq("lote_da_vez", true)
+        .eq("id", topLoteId)
         .maybeSingle();
-      setProxLote(data?.nome ?? null);
+
+      setProxLote(lote?.nome ?? null);
     }
     void fetchProxLote();
 
     const channel = supabase
       .channel("lotes-dispatch-shell")
       .on("postgres_changes", { event: "*", schema: "public", table: "lotes" }, () => {
+        void fetchProxLote();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "veiculos" }, () => {
         void fetchProxLote();
       })
       .subscribe();
