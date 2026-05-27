@@ -265,17 +265,16 @@ export function DashboardShell({
 
       // Conta ativos por lote
       const counts = new Map<string, number>();
-      for (const v of veiculosAtivos) {
-        const lid = (v as { lote_id: string }).lote_id;
-        counts.set(lid, (counts.get(lid) ?? 0) + 1);
-      }
+      (veiculosAtivos as { lote_id: string }[]).forEach((v) => {
+        counts.set(v.lote_id, (counts.get(v.lote_id) ?? 0) + 1);
+      });
 
       // Lote com mais ativos
       let topLoteId = "";
       let maxCount = 0;
-      for (const [id, count] of counts) {
+      counts.forEach((count, id) => {
         if (count > maxCount) { maxCount = count; topLoteId = id; }
-      }
+      });
 
       const { data: lote } = await supabase
         .from("lotes")
