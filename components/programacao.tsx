@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarClock, Loader2, RefreshCw, Zap } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
-import { getProgramacaoAction, type LoteProgramacao } from "@/app/actions/lotes";
+import { getProgramacaoAction, sincronizarFilaAction, type LoteProgramacao } from "@/app/actions/lotes";
 import { SectionHeader } from "./section-header";
 
 const LOTE_CAPACITY = 16;
@@ -51,7 +51,8 @@ function LoteCard({
   lote: LoteProgramacao;
   isFirst: boolean;
 }) {
-  const isDaVez = lote.lote_da_vez;
+  // PRÓXIMO é sempre a posição 1 da fila ordenada (mais ativos), nunca o flag do banco
+  const isDaVez = isFirst && lote.veiculos_ativos > 0;
 
   return (
     <div
@@ -131,9 +132,16 @@ export function Programacao() {
     setCarregando(false);
   }, []);
 
+  // No mount: sincroniza o flag lote_da_vez com o topo da fila ordenada,
+  // depois carrega. Garante que o banco reflita a ordem real.
   useEffect(() => {
-    void load();
-  }, [load]);
+    async function syncAndLoad() {
+      await sincronizarFilaAction();
+      await load();
+    }
+    void syncAndLoad();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Atualiza em tempo real quando lotes ou veículos mudarem
   useEffect(() => {
@@ -158,7 +166,8 @@ export function Programacao() {
 
   const totalAtivos = lotes.reduce((s, l) => s + l.veiculos_ativos, 0);
   const totalVeiculos = lotes.reduce((s, l) => s + l.total_veiculos, 0);
-  const proxLote = lotes.find((l) => l.lote_da_vez) ?? lotes[0];
+  // Próximo = posição 1 da fila (mais ativos), independente do flag no banco
+  const proxLote = lotes.find((l) => l.veiculos_ativos > 0) ?? lotes[0];
 
   return (
     <section className="space-y-6">

@@ -72,8 +72,37 @@ export async function getProgramacaoAction(): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// Avança a fila: marca o lote atual como false e o próximo como true.
-// Retorna o lote que acabou de disparar (para payload do webhook).
+// Sincroniza o flag lote_da_vez no banco para o topo da fila ordenada
+// (maior volume de veículos ativos). Chamado ao montar a página Programação.
+// ---------------------------------------------------------------------------
+export async function sincronizarFilaAction(): Promise<{ error?: string }> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: programacao, error } = await getProgramacaoAction();
+  if (error) return { error };
+
+  const elegíveis = programacao.filter((l) => l.veiculos_ativos > 0);
+
+  // Limpa todos os flags
+  await supabase
+    .from("lotes")
+    .update({ lote_da_vez: false })
+    .neq("id", "00000000-0000-0000-0000-000000000000");
+
+  // Marca o topo da fila (mais ativos) como lote_da_vez
+  if (elegíveis.length > 0) {
+    await supabase
+      .from("lotes")
+      .update({ lote_da_vez: true })
+      .eq("id", elegíveis[0].id);
+  }
+
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// Dispara o lote no topo da fila ordenada (maior volume de ativos).
+// Retorna o lote que foi disparado (para payload do webhook).
 // ---------------------------------------------------------------------------
 export async function avancarLoteDaVezAction(): Promise<{
   loteFoiDisparado: { id: string; nome: string } | null;
@@ -84,38 +113,28 @@ export async function avancarLoteDaVezAction(): Promise<{
   const { data: programacao, error } = await getProgramacaoAction();
   if (error || !programacao.length) return { loteFoiDisparado: null, error };
 
-  // Lotes com pelo menos 1 veículo ativo
+  // Lotes com pelo menos 1 veículo ativo (já ordenados por ativos DESC)
   const elegíveis = programacao.filter((l) => l.veiculos_ativos > 0);
-  if (!elegíveis.length) {
-    // Nenhum lote elegível — apenas registra
-    return { loteFoiDisparado: null };
-  }
+  if (!elegíveis.length) return { loteFoiDisparado: null };
 
-  // Qual está marcado agora?
-  const currentIdx = elegíveis.findIndex((l) => l.lote_da_vez);
-  const currentLote = currentIdx >= 0 ? elegíveis[currentIdx] : null;
+  // O topo da fila (posição 1 = mais ativos) é quem dispara agora
+  const loteDisparado = elegíveis[0];
 
-  // Próximo (circular dentro dos elegíveis)
-  const nextIdx = currentIdx === -1 ? 0 : (currentIdx + 1) % elegíveis.length;
-  const nextLote = elegíveis[nextIdx];
-
-  // Limpa todos os lotes
+  // Limpa todos os flags
   await supabase
     .from("lotes")
     .update({ lote_da_vez: false })
     .neq("id", "00000000-0000-0000-0000-000000000000");
 
-  // Marca o próximo
+  // Mantém o topo como lote_da_vez (próximo disparo = quem tiver mais ativos)
   const { error: setErr } = await supabase
     .from("lotes")
     .update({ lote_da_vez: true })
-    .eq("id", nextLote.id);
+    .eq("id", loteDisparado.id);
 
-  if (setErr) return { loteFoiDisparado: currentLote, error: setErr.message };
+  if (setErr) return { loteFoiDisparado: { id: loteDisparado.id, nome: loteDisparado.nome }, error: setErr.message };
 
   return {
-    loteFoiDisparado: currentLote
-      ? { id: currentLote.id, nome: currentLote.nome }
-      : null
+    loteFoiDisparado: { id: loteDisparado.id, nome: loteDisparado.nome }
   };
 }
