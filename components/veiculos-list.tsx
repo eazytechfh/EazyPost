@@ -2,7 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { CalendarClock, Check, Edit3, Layers, Loader2, MoreVertical, Search, Trash2, Users, X, Zap } from "lucide-react";
+import {
+  CalendarClock, Check, CheckSquare, Edit3, Layers, Loader2,
+  MoreVertical, Search, Square, Trash2, Users, X, Zap
+} from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { registrarLogComCliente } from "@/lib/audit-log";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
@@ -71,8 +74,16 @@ export function VeiculosList() {
   const [totalVehicles, setTotalVehicles] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
 
+  // --- seleção em massa ---
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
+  const [bulkLoteModal, setBulkLoteModal] = useState(false);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+
   const totalPages = Math.max(1, Math.ceil(totalVehicles / PAGE_SIZE));
   const hasActiveFilters = Boolean(searchTerm.trim() || statusFilter || loteFilter);
+  const allPageSelected = veiculos.length > 0 && veiculos.every((v) => selectedIds.has(v.id));
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -160,6 +171,7 @@ export function VeiculosList() {
 
   useEffect(() => {
     setCurrentPage(1);
+    setSelectedIds(new Set());
   }, [loteFilter, searchTerm, statusFilter]);
 
   useEffect(() => {
@@ -237,6 +249,87 @@ export function VeiculosList() {
     void loadVehicleGroups();
   }, [groupVehicle, supabase]);
 
+  // -------------------------------------------------------------------------
+  // Seleção em massa
+  // -------------------------------------------------------------------------
+  function toggleSelection(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllPage() {
+    if (allPageSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(veiculos.map((v) => v.id)));
+    }
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  }
+
+  async function bulkUpdateStatus(status: VehicleStatus) {
+    setBulkProcessing(true);
+    const ids = Array.from(selectedIds);
+
+    const { error } = await supabase
+      .from("veiculos")
+      .update({ status, updated_at: new Date().toISOString() })
+      .in("id", ids);
+
+    if (error) {
+      setMessage(error.message);
+    } else {
+      await registrarLogComCliente(
+        supabase,
+        `Usuario alterou o status de ${ids.length} veiculos para [${STATUS_CONFIG[status].label}] em massa`,
+        "anuncio",
+        ids.join(","),
+        { status, quantidade: ids.length }
+      );
+      setBulkStatusOpen(false);
+      clearSelection();
+      await loadData();
+    }
+    setBulkProcessing(false);
+  }
+
+  async function bulkMoveToLote(targetLoteId: string) {
+    setBulkProcessing(true);
+    const ids = Array.from(selectedIds);
+
+    const { error } = await supabase
+      .from("veiculos")
+      .update({ lote_id: targetLoteId, updated_at: new Date().toISOString() })
+      .in("id", ids);
+
+    if (error) {
+      setMessage(error.message);
+    } else {
+      const lote = lotes.find((l) => l.id === targetLoteId);
+      await registrarLogComCliente(
+        supabase,
+        `Usuario moveu ${ids.length} veiculos para o lote [${lote?.nome ?? targetLoteId}] em massa`,
+        "veiculo",
+        ids.join(","),
+        { lote_destino: targetLoteId, quantidade: ids.length }
+      );
+      setBulkLoteModal(false);
+      clearSelection();
+      await loadData();
+    }
+    setBulkProcessing(false);
+  }
+
+  // -------------------------------------------------------------------------
+  // Ações individuais
+  // -------------------------------------------------------------------------
   function beginEdit(veiculo: Veiculo) {
     setEditing(veiculo);
     setEditForm({
@@ -289,7 +382,6 @@ export function VeiculosList() {
 
   async function updateVehicleStatus(id: string, status: VehicleStatus) {
     setOpenMenu(null);
-    // Optimistic update — UI reage imediatamente
     setVeiculos((curr) => curr.map((v) => (v.id === id ? { ...v, status } : v)));
 
     const { error } = await supabase
@@ -299,7 +391,6 @@ export function VeiculosList() {
 
     if (error) {
       setMessage(error.message);
-      // Reverte carregando dados frescos
       await loadData();
       return;
     }
@@ -316,7 +407,6 @@ export function VeiculosList() {
     if (status === "vendido") {
       const veiculo = veiculos.find((v) => v.id === id);
       if (veiculo) {
-        // Busca os id_do_grupo direto do banco para garantir dados frescos
         const { data: links } = await supabase
           .from("anuncio_grupos")
           .select("grupo_id")
@@ -372,19 +462,16 @@ export function VeiculosList() {
   }
 
   async function selecionarLoteDaVez(loteId: string) {
-    // Otimista: marca só o selecionado como true, todos os outros false
     setLotes((curr) =>
       curr.map((l) => ({ ...l, lote_da_vez: l.id === loteId }))
     );
 
-    // 1. Limpa TODOS os lotes
     const { error: clearError } = await supabase
       .from("lotes")
       .update({ lote_da_vez: false })
-      .neq("id", "00000000-0000-0000-0000-000000000000"); // atualiza todos
+      .neq("id", "00000000-0000-0000-0000-000000000000");
     if (clearError) { setMessage(clearError.message); await loadData(); return; }
 
-    // 2. Marca apenas o selecionado
     const { error } = await supabase
       .from("lotes")
       .update({ lote_da_vez: true })
@@ -422,12 +509,10 @@ export function VeiculosList() {
       type VehicleUpdate = { id: string; lote_id: string | null; posicao_lote: number };
       const updates: VehicleUpdate[] = [];
 
-      // Unassign from lote
       if (!targetLoteId) {
         const oldLoteId = veiculo.lote_id;
         updates.push({ id: veiculo.id, lote_id: null, posicao_lote: 0 });
 
-        // Renumber old lote
         if (oldLoteId) {
           const oldLoteVehicles = (await fetchLoteVehicles(oldLoteId))
             .filter((v) => v.lote_id === oldLoteId && v.id !== veiculo.id)
@@ -437,17 +522,14 @@ export function VeiculosList() {
           });
         }
       } else {
-        // Vehicles currently in target lote, excluding the moving vehicle
         let inTarget = (await fetchLoteVehicles(targetLoteId))
           .filter((v) => v.lote_id === targetLoteId && v.id !== veiculo.id)
           .sort((a, b) => (a.posicao_lote ?? 0) - (b.posicao_lote ?? 0));
 
-        // If full, bump last vehicle to next available lote
         if (inTarget.length >= LOTE_CAPACITY) {
           const bumped = inTarget[inTarget.length - 1];
           inTarget = inTarget.slice(0, -1);
 
-          // Find next available lote (excluding target)
           const nextLote = lotes.find(
             (l) => l.id !== targetLoteId && (vehicleCountByLote[l.id] ?? 0) < LOTE_CAPACITY
           );
@@ -457,7 +539,6 @@ export function VeiculosList() {
             return;
           }
 
-          // Place bumped in next lote
           const inNext = (await fetchLoteVehicles(nextLote.id))
             .filter((v) => v.lote_id === nextLote.id && v.id !== bumped.id)
             .sort((a, b) => (a.posicao_lote ?? 0) - (b.posicao_lote ?? 0));
@@ -469,14 +550,12 @@ export function VeiculosList() {
           });
         }
 
-        // Insert moving vehicle at correct position in target
         const insertIdx = computeInsertIndex(veiculo, inTarget);
         const reorderedTarget = insertAt(inTarget, veiculo, insertIdx);
         reorderedTarget.forEach((v, idx) => {
           updates.push({ id: v.id, lote_id: targetLoteId, posicao_lote: idx + 1 });
         });
 
-        // Renumber old lote if vehicle was in a different lote
         if (veiculo.lote_id && veiculo.lote_id !== targetLoteId) {
           const oldLoteVehicles = (await fetchLoteVehicles(veiculo.lote_id))
             .filter((v) => v.lote_id === veiculo.lote_id && v.id !== veiculo.id)
@@ -487,7 +566,6 @@ export function VeiculosList() {
         }
       }
 
-      // Deduplicate: keep last update per vehicle id
       const deduped = Array.from(new Map(updates.map((u) => [u.id, u])).values());
 
       const results = await Promise.all(
@@ -615,15 +693,32 @@ export function VeiculosList() {
       {message ? <p className="mb-4 rounded-md border border-app-border bg-app-panel p-3 text-sm text-app-muted">{message}</p> : null}
 
       <div className="mb-4 space-y-3">
-        {/* Search */}
-        <div className="relative max-w-sm">
-          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-app-muted" />
-          <input
-            className="app-input pl-9"
-            placeholder="Buscar por nome ou 4 últimos da placa"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+        {/* Search + botão de seleção */}
+        <div className="flex items-center gap-3">
+          <div className="relative max-w-sm flex-1">
+            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-app-muted" />
+            <input
+              className="app-input pl-9"
+              placeholder="Buscar por nome ou 4 últimos da placa"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectionMode((v) => !v);
+              if (selectionMode) setSelectedIds(new Set());
+            }}
+            className={`flex shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold transition ${
+              selectionMode
+                ? "border-app-green bg-app-green/10 text-app-green"
+                : "border-app-border text-app-muted hover:border-app-green hover:text-app-green"
+            }`}
+          >
+            {selectionMode ? <CheckSquare size={16} /> : <Square size={16} />}
+            {selectionMode ? "Selecionando" : "Selecionar"}
+          </button>
         </div>
 
         {/* Status filter chips */}
@@ -710,6 +805,85 @@ export function VeiculosList() {
             );
           })}
         </div>
+
+        {/* Barra de seleção em massa — aparece quando há itens selecionados */}
+        {selectionMode && (
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-app-green/40 bg-app-green/5 px-4 py-3">
+            {/* Selecionar todos da página */}
+            <button
+              type="button"
+              onClick={toggleSelectAllPage}
+              className="flex items-center gap-2 text-sm font-semibold text-app-white hover:text-app-green transition"
+            >
+              {allPageSelected
+                ? <CheckSquare size={16} className="text-app-green" />
+                : <Square size={16} className="text-app-muted" />}
+              {allPageSelected ? "Desmarcar todos" : "Selecionar página"}
+            </button>
+
+            <span className="text-xs text-app-muted">|</span>
+
+            <span className="text-sm font-bold text-app-green">
+              {selectedIds.size} selecionado{selectedIds.size !== 1 ? "s" : ""}
+            </span>
+
+            {selectedIds.size > 0 && (
+              <>
+                <span className="text-xs text-app-muted">—</span>
+
+                {/* Mudar status em massa */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setBulkStatusOpen((v) => !v)}
+                    className="flex items-center gap-2 rounded-md border border-app-border bg-app-card px-3 py-1.5 text-sm font-semibold text-app-white hover:border-app-green hover:text-app-green transition"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-app-muted" />
+                    Mudar status
+                  </button>
+                  {bulkStatusOpen && (
+                    <div className="absolute left-0 top-10 z-50 min-w-44 rounded-md border border-app-border bg-app-panel p-1 shadow-xl">
+                      {ALL_STATUSES.map((s) => {
+                        const cfg = STATUS_CONFIG[s];
+                        return (
+                          <button
+                            key={s}
+                            type="button"
+                            disabled={bulkProcessing}
+                            onClick={() => void bulkUpdateStatus(s)}
+                            className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition hover:bg-app-card ${cfg.badge.split(" ").find(c => c.startsWith("text-")) ?? "text-app-white"}`}
+                          >
+                            <span className={`h-2 w-2 rounded-full ${cfg.dot}`} />
+                            {cfg.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Mover para lote em massa */}
+                <button
+                  type="button"
+                  onClick={() => setBulkLoteModal(true)}
+                  className="flex items-center gap-2 rounded-md border border-app-border bg-app-card px-3 py-1.5 text-sm font-semibold text-app-white hover:border-app-green hover:text-app-green transition"
+                >
+                  <Layers size={14} />
+                  Mover para lote
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={clearSelection}
+              className="ml-auto flex items-center gap-1.5 text-xs text-app-muted hover:text-red-400 transition"
+            >
+              <X size={14} />
+              Cancelar
+            </button>
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -728,6 +902,9 @@ export function VeiculosList() {
                 linkedGroups={linkedGroupsByVehicle[veiculo.id] ?? []}
                 loteInfo={veiculo.lote_id ? { nome: loteById.get(veiculo.lote_id)?.nome ?? "Lote", posicao: veiculo.posicao_lote } : null}
                 menuOpen={openMenu === veiculo.id}
+                selectionMode={selectionMode}
+                isSelected={selectedIds.has(veiculo.id)}
+                onToggleSelect={() => toggleSelection(veiculo.id)}
                 onToggleMenu={() => setOpenMenu(openMenu === veiculo.id ? null : veiculo.id)}
                 onEdit={() => beginEdit(veiculo)}
                 onDelete={() => deleteVeiculo(veiculo.id)}
@@ -827,10 +1004,120 @@ export function VeiculosList() {
         />
       ) : null}
 
+      {/* Modal de mover em massa para lote */}
+      {bulkLoteModal ? (
+        <BulkMoverLoteModal
+          lotes={lotes}
+          vehicleCountByLote={vehicleCountByLote}
+          quantidade={selectedIds.size}
+          saving={bulkProcessing}
+          onMove={(loteId) => void bulkMoveToLote(loteId)}
+          onClose={() => setBulkLoteModal(false)}
+        />
+      ) : null}
+
+      {/* Overlay de loading para ações em massa */}
+      {bulkProcessing ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-app-black/60">
+          <div className="flex items-center gap-3 rounded-lg border border-app-border bg-app-panel px-6 py-4">
+            <Loader2 size={20} className="animate-spin text-app-green" />
+            <span className="text-sm font-semibold text-app-white">Aplicando ação em massa...</span>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Modal: mover em massa para lote
+// ---------------------------------------------------------------------------
+function BulkMoverLoteModal({
+  lotes,
+  vehicleCountByLote,
+  quantidade,
+  saving,
+  onMove,
+  onClose
+}: {
+  lotes: Lote[];
+  vehicleCountByLote: Record<string, number>;
+  quantidade: number;
+  saving: boolean;
+  onMove: (loteId: string) => void;
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<string>(lotes[0]?.id ?? "");
+
+  return (
+    <Modal title="Mover para Lote (em massa)" onClose={onClose}>
+      <p className="mb-4 text-sm text-app-muted">
+        Mover <span className="font-bold text-app-white">{quantidade} veículo{quantidade !== 1 ? "s" : ""}</span> para o lote selecionado.
+      </p>
+
+      <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+        {lotes.map((lote) => {
+          const count = vehicleCountByLote[lote.id] ?? 0;
+          const isFull = count >= LOTE_CAPACITY;
+          const progress = count / LOTE_CAPACITY;
+
+          return (
+            <label
+              key={lote.id}
+              className={`flex cursor-pointer items-center gap-3 rounded-md border p-3 transition ${
+                selected === lote.id ? "border-app-green bg-app-green/5" : "border-app-border bg-app-card hover:border-app-green"
+              }`}
+            >
+              <input
+                type="radio"
+                name="bulk-lote"
+                className="accent-app-green"
+                checked={selected === lote.id}
+                onChange={() => setSelected(lote.id)}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 font-semibold text-app-white text-sm">
+                    {lote.lote_da_vez ? <Zap size={11} className="text-yellow-400 shrink-0" /> : null}
+                    {lote.nome}
+                  </span>
+                  <span className={`text-xs font-bold ${isFull ? "text-orange-400" : "text-app-muted"}`}>
+                    {count}/{LOTE_CAPACITY}
+                  </span>
+                </span>
+                <div className="mt-1.5 h-1.5 rounded-full bg-app-border overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${isFull ? "bg-orange-400" : "bg-app-green"}`}
+                    style={{ width: `${Math.min(progress * 100, 100)}%` }}
+                  />
+                </div>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 flex gap-3">
+        <button
+          type="button"
+          className="app-button flex-1"
+          disabled={saving || !selected}
+          onClick={() => onMove(selected)}
+        >
+          {saving ? <Loader2 className="animate-spin" size={18} /> : <Layers size={18} />}
+          Confirmar
+        </button>
+        <button type="button" className="app-button-secondary" onClick={onClose} disabled={saving}>
+          Cancelar
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modal: mover veículo individual para lote
+// ---------------------------------------------------------------------------
 function MoverLoteModal({
   veiculo,
   lotes,
@@ -854,15 +1141,12 @@ function MoverLoteModal({
   const willBump = useMemo(() => {
     if (!targetLoteId) return null;
     const count = vehicleCountByLote[targetLoteId] ?? 0;
-    // If the vehicle is already in this lote, the effective count is one less
-    const effectiveCount = currentLoteId === targetLoteId ? count : count;
-    if (effectiveCount < LOTE_CAPACITY) return null;
+    if (count < LOTE_CAPACITY) return null;
 
-    // Find next available lote
     const next = lotes.find((l) => l.id !== targetLoteId && (vehicleCountByLote[l.id] ?? 0) < LOTE_CAPACITY);
     if (!next) return { bumped: true, nextLote: null as Lote | null };
     return { bumped: true, nextLote: next };
-  }, [targetLoteId, vehicleCountByLote, lotes, currentLoteId]);
+  }, [targetLoteId, vehicleCountByLote, lotes]);
 
   return (
     <Modal title="Mover para Lote" onClose={onClose}>
@@ -899,7 +1183,6 @@ function MoverLoteModal({
                     {count}/{LOTE_CAPACITY}
                   </span>
                 </span>
-                {/* Capacity bar */}
                 <div className="mt-1.5 h-1.5 rounded-full bg-app-border overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all ${isFull ? "bg-orange-400" : "bg-app-green"}`}
@@ -1006,6 +1289,9 @@ function VehicleCard({
   linkedGroups,
   loteInfo,
   menuOpen,
+  selectionMode,
+  isSelected,
+  onToggleSelect,
   onToggleMenu,
   onEdit,
   onDelete,
@@ -1018,6 +1304,9 @@ function VehicleCard({
   linkedGroups: IdDosGrupos[];
   loteInfo: { nome: string; posicao: number } | null;
   menuOpen: boolean;
+  selectionMode: boolean;
+  isSelected: boolean;
+  onToggleSelect: () => void;
   onToggleMenu: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -1030,7 +1319,26 @@ function VehicleCard({
   const [showStatusSubmenu, setShowStatusSubmenu] = useState(false);
 
   return (
-    <article className="group app-card relative overflow-visible transition hover:border-app-green">
+    <article
+      className={`group app-card relative overflow-visible transition ${
+        isSelected
+          ? "border-app-green ring-2 ring-app-green/30"
+          : "hover:border-app-green"
+      }`}
+      onClick={selectionMode ? onToggleSelect : undefined}
+      style={selectionMode ? { cursor: "pointer" } : undefined}
+    >
+      {/* Checkbox de seleção */}
+      {selectionMode && (
+        <div className="absolute left-3 top-3 z-10">
+          <div className={`flex h-5 w-5 items-center justify-center rounded border-2 transition ${
+            isSelected ? "border-app-green bg-app-green" : "border-white/70 bg-app-black/50"
+          }`}>
+            {isSelected && <Check size={12} className="text-app-black font-bold" />}
+          </div>
+        </div>
+      )}
+
       <div className="relative aspect-video overflow-hidden rounded-t-lg bg-app-panel">
         {thumbnail ? (
           <Image src={thumbnail} alt={veiculo.nome_anuncio} fill className="object-cover" />
@@ -1052,60 +1360,62 @@ function VehicleCard({
             <LinkedGroups groups={linkedGroups} />
             <p className="mt-1 text-lg font-bold text-app-green">{formatCurrency(veiculo.valor)}</p>
           </div>
-          <div className="relative shrink-0">
-            <button
-              onClick={() => { onToggleMenu(); setShowStatusSubmenu(false); }}
-              className="rounded-md border border-app-border bg-app-panel p-2 text-app-white transition hover:border-app-green"
-              aria-label="Acoes"
-            >
-              <MoreVertical size={18} />
-            </button>
-            {menuOpen ? (
-              <div className="absolute right-0 top-11 z-50 min-w-56 max-w-[calc(100vw-2rem)] rounded-md border border-app-border bg-app-panel p-1 shadow-xl">
-                <ActionButton icon={<Edit3 size={16} />} label="Editar" onClick={onEdit} />
-                <ActionButton icon={<Trash2 size={16} />} label="Excluir" onClick={onDelete} />
-                <ActionButton icon={<Users size={16} />} label="Grupos de Anuncio" onClick={onGroups} />
-                <ActionButton icon={<CalendarClock size={16} />} label="Programar" onClick={onProgram} />
-                <ActionButton icon={<Layers size={16} />} label="Mover para Lote" onClick={onMoverLote} />
+          {!selectionMode && (
+            <div className="relative shrink-0">
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleMenu(); setShowStatusSubmenu(false); }}
+                className="rounded-md border border-app-border bg-app-panel p-2 text-app-white transition hover:border-app-green"
+                aria-label="Acoes"
+              >
+                <MoreVertical size={18} />
+              </button>
+              {menuOpen ? (
+                <div className="absolute right-0 top-11 z-50 min-w-56 max-w-[calc(100vw-2rem)] rounded-md border border-app-border bg-app-panel p-1 shadow-xl">
+                  <ActionButton icon={<Edit3 size={16} />} label="Editar" onClick={onEdit} />
+                  <ActionButton icon={<Trash2 size={16} />} label="Excluir" onClick={onDelete} />
+                  <ActionButton icon={<Users size={16} />} label="Grupos de Anuncio" onClick={onGroups} />
+                  <ActionButton icon={<CalendarClock size={16} />} label="Programar" onClick={onProgram} />
+                  <ActionButton icon={<Layers size={16} />} label="Mover para Lote" onClick={onMoverLote} />
 
-                <div className="my-1 border-t border-app-border" />
+                  <div className="my-1 border-t border-app-border" />
 
-                <button
-                  onClick={() => setShowStatusSubmenu((v) => !v)}
-                  className="flex w-full items-center justify-between whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-app-white transition hover:bg-app-card hover:text-app-green"
-                >
-                  <span className="flex items-center gap-2">
-                    <span className={`h-2 w-2 rounded-full ${STATUS_CONFIG[veiculo.status.trim().toLowerCase() as VehicleStatus]?.dot ?? "bg-yellow-400"}`} />
-                    Mudar Status
-                  </span>
-                  <span className="text-app-muted">{showStatusSubmenu ? "▲" : "▼"}</span>
-                </button>
+                  <button
+                    onClick={() => setShowStatusSubmenu((v) => !v)}
+                    className="flex w-full items-center justify-between whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-app-white transition hover:bg-app-card hover:text-app-green"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className={`h-2 w-2 rounded-full ${STATUS_CONFIG[veiculo.status.trim().toLowerCase() as VehicleStatus]?.dot ?? "bg-yellow-400"}`} />
+                      Mudar Status
+                    </span>
+                    <span className="text-app-muted">{showStatusSubmenu ? "▲" : "▼"}</span>
+                  </button>
 
-                {showStatusSubmenu ? (
-                  <div className="mt-1 space-y-0.5 rounded-md border border-app-border bg-app-card p-1">
-                    {ALL_STATUSES.map((s) => {
-                      const cfg = STATUS_CONFIG[s];
-                      const isCurrent = veiculo.status.trim().toLowerCase() === s;
-                      return (
-                        <button
-                          key={s}
-                          onClick={() => { onStatusChange(s); setShowStatusSubmenu(false); }}
-                          disabled={isCurrent}
-                          className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition ${
-                            isCurrent ? "cursor-default opacity-40" : "hover:bg-app-panel"
-                          } ${cfg.badge.split(" ").find(c => c.startsWith("text-")) ?? "text-app-white"}`}
-                        >
-                          <span className={`h-2 w-2 rounded-full ${cfg.dot}`} />
-                          {cfg.label}
-                          {isCurrent ? <span className="ml-auto text-xs opacity-60">atual</span> : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
+                  {showStatusSubmenu ? (
+                    <div className="mt-1 space-y-0.5 rounded-md border border-app-border bg-app-card p-1">
+                      {ALL_STATUSES.map((s) => {
+                        const cfg = STATUS_CONFIG[s];
+                        const isCurrent = veiculo.status.trim().toLowerCase() === s;
+                        return (
+                          <button
+                            key={s}
+                            onClick={() => { onStatusChange(s); setShowStatusSubmenu(false); }}
+                            disabled={isCurrent}
+                            className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition ${
+                              isCurrent ? "cursor-default opacity-40" : "hover:bg-app-panel"
+                            } ${cfg.badge.split(" ").find(c => c.startsWith("text-")) ?? "text-app-white"}`}
+                          >
+                            <span className={`h-2 w-2 rounded-full ${cfg.dot}`} />
+                            {cfg.label}
+                            {isCurrent ? <span className="ml-auto text-xs opacity-60">atual</span> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
         <dl className="mt-4 grid grid-cols-3 gap-2 text-sm">
           <Info label="KM" value={veiculo.quilometragem} />
