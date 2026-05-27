@@ -3,18 +3,27 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Car, ClipboardList, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
+import { CalendarClock, Car, ClipboardList, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
+import { avancarLoteDaVezAction } from "@/app/actions/lotes";
 
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
 const TOTAL_SECONDS = 60 * 60;
 
 /**
  * Dispara o webhook com até 4 tentativas (backoff: 0s → 3s → 7s → 15s).
+ * Recebe o lote que está sendo disparado para incluir no payload.
  * Sempre resolve — nunca rejeita — para que o timer resete mesmo em falha total.
  */
-async function tryFireWebhook(): Promise<void> {
+async function tryFireWebhook(
+  lote?: { id: string; nome: string } | null
+): Promise<void> {
   const retryDelays = [0, 3000, 7000, 15000];
+  const body = {
+    disparar: "ok",
+    ...(lote ? { lote_id: lote.id, lote_nome: lote.nome } : {})
+  };
+
   for (let attempt = 0; attempt < retryDelays.length; attempt++) {
     if (retryDelays[attempt] > 0) {
       await new Promise<void>((r) => setTimeout(r, retryDelays[attempt]));
@@ -23,10 +32,10 @@ async function tryFireWebhook(): Promise<void> {
       const res = await fetch(WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ disparar: "ok" })
+        body: JSON.stringify(body)
       });
       if (res.ok) {
-        console.info(`[EazyPost] Webhook disparado (tentativa ${attempt + 1})`);
+        console.info(`[EazyPost] Webhook disparado — lote: ${lote?.nome ?? "N/A"} (tentativa ${attempt + 1})`);
         return;
       }
       console.warn(`[EazyPost] Webhook HTTP ${res.status} — tentativa ${attempt + 1}/${retryDelays.length}`);
@@ -40,6 +49,7 @@ async function tryFireWebhook(): Promise<void> {
 const navItems = [
   { href: "/dashboard/anuncio", label: "Cadastrar Anuncio", icon: PlusCircle },
   { href: "/dashboard/veiculos", label: "Lista de Veiculos", icon: Car },
+  { href: "/dashboard/programacao", label: "Programação", icon: CalendarClock },
   { href: "/dashboard/grupos", label: "Grupos", icon: MessageCircle },
   { href: "/dashboard/whatsapp", label: "Conectar WhatsApp", icon: Smartphone }
 ];
@@ -213,8 +223,14 @@ export function DashboardShell({
     const newNext = Date.now() + TOTAL_SECONDS * 1000;
 
     async function fire() {
-      await tryFireWebhook();
-      // Grava no Supabase — real-time propaga para todos os outros browsers
+      // 1. Avança a fila automaticamente e obtém o lote que foi disparado
+      const { loteFoiDisparado, error: filaErr } = await avancarLoteDaVezAction();
+      if (filaErr) console.warn("[EazyPost] Erro ao avançar fila de lotes:", filaErr);
+
+      // 2. Dispara o webhook com os dados do lote
+      await tryFireWebhook(loteFoiDisparado ?? undefined);
+
+      // 3. Grava próximo disparo no Supabase — real-time propaga para todos os browsers
       const { error } = await supabase
         .from("dispatch_config")
         .update({ next_dispatch_at: new Date(newNext).toISOString() })
@@ -349,7 +365,7 @@ export function DashboardShell({
             </button>
           </div>
         </div>
-        <nav className={`grid gap-2 ${isAdmin ? "grid-cols-5" : "grid-cols-4"}`}>
+        <nav className={`grid gap-1.5 ${isAdmin ? "grid-cols-6" : "grid-cols-5"}`}>
           {[...navItems, ...(isAdmin ? adminNavItems : [])].map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;
