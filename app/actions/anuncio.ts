@@ -134,5 +134,21 @@ export async function criarAnuncioAction(
     .update({ lote_id: targetLote.id, posicao_lote: insertIndex })
     .eq("id", vehicleId);
 
+  // 9. Vincula automaticamente a todos os grupos cadastrados com id_do_grupo preenchido
+  const { data: grupos } = await supabase
+    .from("id_dos_grupos")
+    .select("id")
+    .not("id_do_grupo", "is", null);
+
+  if (grupos && grupos.length > 0) {
+    const grupoInserts = (grupos as { id: string }[]).map((grupo) => ({
+      veiculo_id: vehicleId,
+      grupo_id: grupo.id,
+      user_id: user.id,
+      programado: false
+    }));
+    await supabase.from("anuncio_grupos").insert(grupoInserts);
+  }
+
   return { data: { id: vehicleId, lote_nome: targetLote.nome } };
 }
