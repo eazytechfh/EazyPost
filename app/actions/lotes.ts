@@ -115,7 +115,26 @@ export async function avancarLoteDaVezAction(): Promise<{
 
   // Lotes com pelo menos 1 veículo ativo (já ordenados por ativos DESC)
   const elegíveis = programacao.filter((l) => l.veiculos_ativos > 0);
-  if (!elegíveis.length) return { loteFoiDisparado: null };
+
+  if (!elegíveis.length) {
+    // Nenhum lote ativo — verifica se há veículos "enviado" para reiniciar o ciclo
+    const { count: enviadosCount } = await supabase
+      .from("veiculos")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "enviado");
+
+    if (enviadosCount && enviadosCount > 0) {
+      // Ciclo completo: reseta todos "enviado" → "ativo"
+      await supabase
+        .from("veiculos")
+        .update({ status: "ativo", updated_at: new Date().toISOString() })
+        .eq("status", "enviado");
+
+      console.info(`[EazyPost] Ciclo completo — ${enviadosCount} veículos "enviado" resetados para "ativo".`);
+    }
+
+    return { loteFoiDisparado: null };
+  }
 
   // O topo da fila (posição 1 = mais ativos) é quem dispara agora
   const loteDisparado = elegíveis[0];
