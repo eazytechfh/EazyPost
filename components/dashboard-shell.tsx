@@ -227,8 +227,11 @@ export function DashboardShell({
       const { loteFoiDisparado, error: filaErr } = await avancarLoteDaVezAction();
       if (filaErr) console.warn("[EazyPost] Erro ao avançar fila de lotes:", filaErr);
 
-      // 2. Dispara o webhook com os dados do lote
-      await tryFireWebhook(loteFoiDisparado ?? undefined);
+      // 2. Dispara o webhook apenas se houver um lote real para disparar
+      // (quando loteFoiDisparado é null, o ciclo foi resetado — sem disparo)
+      if (loteFoiDisparado) {
+        await tryFireWebhook(loteFoiDisparado);
+      }
 
       // 3. Grava próximo disparo no Supabase — real-time propaga para todos os browsers
       const { error } = await supabase
