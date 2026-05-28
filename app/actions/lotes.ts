@@ -2,6 +2,30 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
+// ---------------------------------------------------------------------------
+// Registra um log gerado automaticamente pelo sistema (sem sessão de usuário)
+// ---------------------------------------------------------------------------
+async function registrarLogSistema(
+  acao: string,
+  detalhes: Record<string, unknown>
+) {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.from("logs_auditoria").insert({
+    user_email: "sistema",
+    user_id: null,
+    acao,
+    entidade: "disparo_automatico",
+    entidade_id: null,
+    detalhes: {
+      ...detalhes,
+      executado_em: new Date().toISOString()
+    }
+  });
+  if (error) {
+    console.error("[EazyPost] Erro ao registrar log do sistema:", error.message);
+  }
+}
+
 export type LoteProgramacao = {
   id: string;
   nome: string;
@@ -130,7 +154,16 @@ export async function avancarLoteDaVezAction(): Promise<{
         .update({ status: "ativo", updated_at: new Date().toISOString() })
         .eq("status", "enviado");
 
-      console.info(`[EazyPost] Ciclo completo — ${enviadosCount} veículos "enviado" resetados para "ativo".`);
+      await registrarLogSistema(
+        `Sistema resetou o ciclo — ${enviadosCount} veículo${enviadosCount !== 1 ? "s" : ""} voltaram de "enviado" para "ativo"`,
+        { acao: "ciclo_resetado", veiculos_resetados: enviadosCount }
+      );
+    } else {
+      // Sem ativos e sem enviados — nenhuma ação possível
+      await registrarLogSistema(
+        "Sistema verificou a fila mas não há veículos para disparar",
+        { acao: "sem_veiculos" }
+      );
     }
 
     return { loteFoiDisparado: null };
@@ -152,6 +185,16 @@ export async function avancarLoteDaVezAction(): Promise<{
     .eq("id", loteDisparado.id);
 
   if (setErr) return { loteFoiDisparado: { id: loteDisparado.id, nome: loteDisparado.nome }, error: setErr.message };
+
+  await registrarLogSistema(
+    `Sistema disparou o webhook para o lote "${loteDisparado.nome}" (${loteDisparado.veiculos_ativos} veículo${loteDisparado.veiculos_ativos !== 1 ? "s" : ""} ativo${loteDisparado.veiculos_ativos !== 1 ? "s" : ""})`,
+    {
+      acao: "webhook_disparado",
+      lote_id: loteDisparado.id,
+      lote_nome: loteDisparado.nome,
+      veiculos_ativos: loteDisparado.veiculos_ativos
+    }
+  );
 
   return {
     loteFoiDisparado: { id: loteDisparado.id, nome: loteDisparado.nome }
