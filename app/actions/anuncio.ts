@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 type ActionResult<T> = { data: T; error?: never } | { data?: never; error: string };
 
 const LOTE_CAPACITY = 16;
+const NOME_LOTE_VENDIDOS = "Vendidos";
 
 type VehiclePayload = {
   nome_anuncio: string;
@@ -151,4 +152,148 @@ export async function criarAnuncioAction(
   }
 
   return { data: { id: vehicleId, lote_nome: targetLote.nome } };
+}
+
+// ---------------------------------------------------------------------------
+// Marca veículo como vendido, move para "Lote Vendidos" e preenche
+// a vaga aberta no lote original com o último veículo do lote menor.
+// ---------------------------------------------------------------------------
+export async function venderVeiculoAction(
+  vehicleId: string
+): Promise<{ error?: string }> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Nao autenticado." };
+
+  // 1. Busca o veículo
+  const { data: veiculoRaw, error: getErr } = await supabase
+    .from("veiculos")
+    .select("id, lote_id, posicao_lote, nome_anuncio")
+    .eq("id", vehicleId)
+    .single();
+
+  if (getErr || !veiculoRaw) return { error: getErr?.message ?? "Veiculo nao encontrado." };
+  const veiculo = veiculoRaw as { id: string; lote_id: string | null; posicao_lote: number; nome_anuncio: string };
+  const originalLoteId = veiculo.lote_id;
+
+  // 2. Encontra ou cria o "Lote Vendidos"
+  const { data: loteVendidosRaw } = await supabase
+    .from("lotes")
+    .select("id")
+    .eq("nome", NOME_LOTE_VENDIDOS)
+    .maybeSingle();
+
+  let loteVendidosId: string;
+
+  if (loteVendidosRaw) {
+    loteVendidosId = (loteVendidosRaw as { id: string }).id;
+  } else {
+    const { data: novoLote, error: loteErr } = await supabase
+      .from("lotes")
+      .insert({ user_id: user.id, nome: NOME_LOTE_VENDIDOS, lote_da_vez: false })
+      .select("id")
+      .single();
+    if (loteErr || !novoLote) return { error: loteErr?.message ?? "Erro ao criar Lote Vendidos." };
+    loteVendidosId = (novoLote as { id: string }).id;
+  }
+
+  // 3. Move o veículo para o Lote Vendidos com status "vendido"
+  const { error: moveErr } = await supabase
+    .from("veiculos")
+    .update({ status: "vendido", lote_id: loteVendidosId, posicao_lote: 0, updated_at: new Date().toISOString() })
+    .eq("id", vehicleId);
+
+  if (moveErr) return { error: moveErr.message };
+
+  // 4. Renumera o lote original (fecha o buraco deixado pelo veículo vendido)
+  if (!originalLoteId || originalLoteId === loteVendidosId) return {};
+
+  const { data: remainingRaw } = await supabase
+    .from("veiculos")
+    .select("id, posicao_lote")
+    .eq("lote_id", originalLoteId)
+    .neq("id", vehicleId)
+    .order("posicao_lote", { ascending: true });
+
+  const remaining = (remainingRaw ?? []) as { id: string; posicao_lote: number }[];
+
+  await Promise.all(
+    remaining.map((v, idx) =>
+      supabase.from("veiculos")
+        .update({ posicao_lote: idx + 1, updated_at: new Date().toISOString() })
+        .eq("id", v.id)
+    )
+  );
+
+  // 5. Preenche a vaga com 1 veículo do lote com MENOS veículos
+  // (excluindo Lote Vendidos e o próprio lote original)
+  const { data: outrosLotesRaw } = await supabase
+    .from("lotes")
+    .select("id")
+    .neq("id", loteVendidosId)
+    .neq("id", originalLoteId)
+    .neq("nome", NOME_LOTE_VENDIDOS);
+
+  const outrosLoteIds = ((outrosLotesRaw ?? []) as { id: string }[]).map((l) => l.id);
+
+  if (outrosLoteIds.length === 0) return {};
+
+  // Conta veículos (não vendidos) em cada lote
+  const contagems = await Promise.all(
+    outrosLoteIds.map(async (id) => {
+      const { count } = await supabase
+        .from("veiculos")
+        .select("id", { count: "exact", head: true })
+        .eq("lote_id", id)
+        .neq("status", "vendido");
+      return { id, count: count ?? 0 };
+    })
+  );
+
+  // Ordena: menor contagem primeiro, ignora lotes vazios
+  const comVeiculos = contagems.filter((l) => l.count > 0);
+  if (comVeiculos.length === 0) return {};
+
+  comVeiculos.sort((a, b) => a.count - b.count);
+  const fonteLoteId = comVeiculos[0].id;
+
+  // Pega o último veículo do lote fonte (por posicao_lote desc)
+  const { data: candidatoRaw } = await supabase
+    .from("veiculos")
+    .select("id, posicao_lote")
+    .eq("lote_id", fonteLoteId)
+    .neq("status", "vendido")
+    .order("posicao_lote", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!candidatoRaw) return {};
+  const candidato = candidatoRaw as { id: string; posicao_lote: number };
+
+  // Move o candidato para o lote original
+  const novaPosicao = remaining.length + 1; // próxima posição disponível
+  await supabase
+    .from("veiculos")
+    .update({ lote_id: originalLoteId, posicao_lote: novaPosicao, updated_at: new Date().toISOString() })
+    .eq("id", candidato.id);
+
+  // Renumera o lote fonte após a remoção
+  const { data: fonteRestanteRaw } = await supabase
+    .from("veiculos")
+    .select("id, posicao_lote")
+    .eq("lote_id", fonteLoteId)
+    .neq("id", candidato.id)
+    .order("posicao_lote", { ascending: true });
+
+  const fonteRestante = (fonteRestanteRaw ?? []) as { id: string; posicao_lote: number }[];
+  await Promise.all(
+    fonteRestante.map((v, idx) =>
+      supabase.from("veiculos")
+        .update({ posicao_lote: idx + 1, updated_at: new Date().toISOString() })
+        .eq("id", v.id)
+    )
+  );
+
+  return {};
 }

@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { registrarLogComCliente } from "@/lib/audit-log";
+import { venderVeiculoAction } from "@/app/actions/anuncio";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
 import type { AnuncioGrupo, IdDosGrupos, Lote, Veiculo } from "@/types/database";
 import { RichTextEditor } from "./rich-text-editor";
@@ -382,18 +383,65 @@ export function VeiculosList() {
 
   async function updateVehicleStatus(id: string, status: VehicleStatus) {
     setOpenMenu(null);
-    setVeiculos((curr) => curr.map((v) => (v.id === id ? { ...v, status } : v)));
 
+    if (status === "vendido") {
+      // Delegado ao server action: move para Lote Vendidos + preenche vaga
+      setVeiculos((curr) => curr.map((v) => (v.id === id ? { ...v, status } : v)));
+      const veiculo = veiculos.find((v) => v.id === id);
+
+      const { error } = await venderVeiculoAction(id);
+      if (error) {
+        setMessage(error);
+        await loadData();
+        return;
+      }
+
+      await registrarLogComCliente(
+        supabase,
+        `Usuario marcou o anuncio [${veiculo?.nome_anuncio ?? id}] como Vendido e realocou a vaga do lote`,
+        "anuncio",
+        id,
+        { status: "vendido", lote_anterior: veiculo?.lote_id }
+      );
+
+      // Dispara webhook de venda
+      if (veiculo) {
+        const { data: links } = await supabase
+          .from("anuncio_grupos").select("grupo_id").eq("veiculo_id", id);
+        const grupoDbIds = (links ?? []).map((l: { grupo_id: string }) => l.grupo_id);
+        let grupos_ids: string[] = [];
+        if (grupoDbIds.length > 0) {
+          const { data: grupos } = await supabase
+            .from("id_dos_grupos").select("id_do_grupo").in("id", grupoDbIds);
+          grupos_ids = (grupos ?? [])
+            .map((g: { id_do_grupo: string | null }) => g.id_do_grupo)
+            .filter((v): v is string => Boolean(v));
+        }
+        fetch("https://n8n.eazy.tec.br/webhook/887a42e8-429f-423b-9b98-29d99da61015", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: veiculo.id, nome_anuncio: veiculo.nome_anuncio, placa: veiculo.placa,
+            valor: veiculo.valor, fipe: veiculo.fipe, cor: veiculo.cor,
+            motor: veiculo.motor, quilometragem: veiculo.quilometragem, tipo: veiculo.tipo,
+            status: "vendido", imagens: veiculo.imagens, texto_anuncio: veiculo.texto_anuncio,
+            grupos_ids
+          })
+        }).catch((err) => console.error("Erro ao disparar webhook de venda:", err));
+      }
+
+      await loadData();
+      return;
+    }
+
+    // Demais status: atualização simples
+    setVeiculos((curr) => curr.map((v) => (v.id === id ? { ...v, status } : v)));
     const { error } = await supabase
       .from("veiculos")
       .update({ status, updated_at: new Date().toISOString() })
       .eq("id", id);
 
-    if (error) {
-      setMessage(error.message);
-      await loadData();
-      return;
-    }
+    if (error) { setMessage(error.message); await loadData(); return; }
 
     const veiculoAtualizado = veiculos.find((v) => v.id === id);
     await registrarLogComCliente(
@@ -403,49 +451,6 @@ export function VeiculosList() {
       id,
       { status }
     );
-
-    if (status === "vendido") {
-      const veiculo = veiculos.find((v) => v.id === id);
-      if (veiculo) {
-        const { data: links } = await supabase
-          .from("anuncio_grupos")
-          .select("grupo_id")
-          .eq("veiculo_id", id);
-
-        const grupoDbIds = (links ?? []).map((l: { grupo_id: string }) => l.grupo_id);
-
-        let grupos_ids: string[] = [];
-        if (grupoDbIds.length > 0) {
-          const { data: grupos } = await supabase
-            .from("id_dos_grupos")
-            .select("id_do_grupo")
-            .in("id", grupoDbIds);
-          grupos_ids = (grupos ?? [])
-            .map((g: { id_do_grupo: string | null }) => g.id_do_grupo)
-            .filter((v): v is string => Boolean(v));
-        }
-
-        fetch("https://n8n.eazy.tec.br/webhook/887a42e8-429f-423b-9b98-29d99da61015", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: veiculo.id,
-            nome_anuncio: veiculo.nome_anuncio,
-            placa: veiculo.placa,
-            valor: veiculo.valor,
-            fipe: veiculo.fipe,
-            cor: veiculo.cor,
-            motor: veiculo.motor,
-            quilometragem: veiculo.quilometragem,
-            tipo: veiculo.tipo,
-            status: "vendido",
-            imagens: veiculo.imagens,
-            texto_anuncio: veiculo.texto_anuncio,
-            grupos_ids
-          })
-        }).catch((err) => console.error("Erro ao disparar webhook de venda:", err));
-      }
-    }
   }
 
   async function createLote(nome: string) {

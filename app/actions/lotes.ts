@@ -48,7 +48,7 @@ export async function getProgramacaoAction(): Promise<{
   const supabase = createSupabaseServerClient();
 
   const [lotesResult, allVehiclesResult, activeVehiclesResult] = await Promise.all([
-    supabase.from("lotes").select("id, nome, lote_da_vez, created_at"),
+    supabase.from("lotes").select("id, nome, lote_da_vez, created_at").neq("nome", "Vendidos"),
     supabase.from("veiculos").select("lote_id").not("lote_id", "is", null),
     supabase
       .from("veiculos")
