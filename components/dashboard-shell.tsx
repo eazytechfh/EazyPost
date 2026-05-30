@@ -288,38 +288,42 @@ export function DashboardShell({
 
   useEffect(() => {
     async function fetchProxLote() {
-      // Busca o lote com maior número de veículos ativos (mesma lógica da fila)
-      const { data: veiculosAtivos } = await supabase
-        .from("veiculos")
-        .select("lote_id")
-        .eq("status", "ativo")
-        .not("lote_id", "is", null);
+      // Usa o mesmo critério de ordenação do getProgramacaoAction:
+      // ativos DESC → total DESC → created_at ASC
+      const [veiculosResult, totalResult, lotesResult] = await Promise.all([
+        supabase.from("veiculos").select("lote_id").eq("status", "ativo").not("lote_id", "is", null),
+        supabase.from("veiculos").select("lote_id").not("lote_id", "is", null),
+        supabase.from("lotes").select("id, nome, created_at").neq("nome", "Vendidos").order("created_at", { ascending: true })
+      ]);
 
-      if (!veiculosAtivos?.length) {
-        setProxLote(null);
-        return;
-      }
+      const lotes = (lotesResult.data ?? []) as { id: string; nome: string; created_at: string }[];
+      if (!lotes.length) { setProxLote(null); return; }
 
-      // Conta ativos por lote
-      const counts = new Map<string, number>();
-      (veiculosAtivos as { lote_id: string }[]).forEach((v) => {
-        counts.set(v.lote_id, (counts.get(v.lote_id) ?? 0) + 1);
+      // Conta ativos e totais por lote
+      const ativosMap = new Map<string, number>();
+      const totalMap  = new Map<string, number>();
+
+      (veiculosResult.data ?? [] as { lote_id: string }[]).forEach((v) => {
+        const lid = (v as { lote_id: string }).lote_id;
+        ativosMap.set(lid, (ativosMap.get(lid) ?? 0) + 1);
+      });
+      (totalResult.data ?? [] as { lote_id: string }[]).forEach((v) => {
+        const lid = (v as { lote_id: string }).lote_id;
+        totalMap.set(lid, (totalMap.get(lid) ?? 0) + 1);
       });
 
-      // Lote com mais ativos
-      let topLoteId = "";
-      let maxCount = 0;
-      counts.forEach((count, id) => {
-        if (count > maxCount) { maxCount = count; topLoteId = id; }
+      // Ordena igual à fila: ativos DESC → total DESC → created_at ASC
+      const sorted = [...lotes].sort((a, b) => {
+        const diffAtivos = (ativosMap.get(b.id) ?? 0) - (ativosMap.get(a.id) ?? 0);
+        if (diffAtivos !== 0) return diffAtivos;
+        const diffTotal = (totalMap.get(b.id) ?? 0) - (totalMap.get(a.id) ?? 0);
+        if (diffTotal !== 0) return diffTotal;
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       });
 
-      const { data: lote } = await supabase
-        .from("lotes")
-        .select("nome")
-        .eq("id", topLoteId)
-        .maybeSingle();
-
-      setProxLote(lote?.nome ?? null);
+      // Topo da fila com pelo menos 1 ativo
+      const top = sorted.find((l) => (ativosMap.get(l.id) ?? 0) > 0) ?? sorted[0];
+      setProxLote(top?.nome ?? null);
     }
     void fetchProxLote();
 
