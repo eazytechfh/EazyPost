@@ -143,9 +143,10 @@ export function DashboardShell({
   // --- timer ---
   const [timerSeconds, setTimerSeconds] = useState(TOTAL_SECONDS);
   const [timerFiring, setTimerFiring] = useState(false);
-  const firingRef = useRef(false);
-  // Ref (não state) para o timestamp — evita re-renders desnecessários
-  const nextAtRef = useRef<number | null>(null);
+  const firingRef  = useRef(false);
+  const nextAtRef  = useRef<number | null>(null);
+  // ISO string exata vinda do banco — usada no claim atômico (evita duplo disparo)
+  const nextAtIsoRef = useRef<string | null>(null);
 
   // 1. Busca o timestamp global do Supabase ao montar
   useEffect(() => {
@@ -160,9 +161,11 @@ export function DashboardShell({
         if (error) throw error;
 
         if (data?.next_dispatch_at) {
-          const ts = new Date(data.next_dispatch_at as string).getTime();
+          const iso = data.next_dispatch_at as string;
+          const ts  = new Date(iso).getTime();
           if (Number.isFinite(ts)) {
-            nextAtRef.current = ts;
+            nextAtRef.current    = ts;
+            nextAtIsoRef.current = iso;
             setTimerSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
             return;
           }
@@ -170,8 +173,9 @@ export function DashboardShell({
       } catch (err) {
         console.warn("[EazyPost] dispatch_config não encontrado, usando timer local:", err);
       }
-      // Fallback: tabela ainda não existe ou linha não criada
-      nextAtRef.current = Date.now() + TOTAL_SECONDS * 1000;
+      // Fallback: sem linha no banco ainda
+      nextAtRef.current    = Date.now() + TOTAL_SECONDS * 1000;
+      nextAtIsoRef.current = null; // sem ISO → claim atômico desabilitado neste fallback
       setTimerSeconds(TOTAL_SECONDS);
     }
     void init();
@@ -187,9 +191,11 @@ export function DashboardShell({
         (payload) => {
           try {
             const raw = (payload.new as Record<string, unknown>).next_dispatch_at;
-            const ts = new Date(raw as string).getTime();
+            const iso = raw as string;
+            const ts  = new Date(iso).getTime();
             if (!Number.isFinite(ts)) return;
-            nextAtRef.current = ts;
+            nextAtRef.current    = ts;
+            nextAtIsoRef.current = iso;
             setTimerSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
             firingRef.current = false;
             setTimerFiring(false);
@@ -220,29 +226,57 @@ export function DashboardShell({
     firingRef.current = true;
     setTimerFiring(true);
 
-    const newNext = Date.now() + TOTAL_SECONDS * 1000;
+    const newNextTs  = Date.now() + TOTAL_SECONDS * 1000;
+    const newNextIso = new Date(newNextTs).toISOString();
 
     async function fire() {
-      // 1. Avança a fila automaticamente e obtém o lote que foi disparado
+      // ─────────────────────────────────────────────────────────────────────
+      // CLAIM ATÔMICO: tenta gravar o próximo disparo usando o valor atual
+      // como condição (WHERE next_dispatch_at = <valor_que_temos>).
+      // Se outro browser/aba já disparou, o UPDATE retorna 0 linhas → abortamos.
+      // ─────────────────────────────────────────────────────────────────────
+      const currentIso = nextAtIsoRef.current;
+
+      if (currentIso) {
+        // Banco tem um valor — usamos claim atômico
+        const { data: claimed } = await supabase
+          .from("dispatch_config")
+          .update({ next_dispatch_at: newNextIso })
+          .eq("id", 1)
+          .eq("next_dispatch_at", currentIso)
+          .select("id");
+
+        if (!claimed || claimed.length === 0) {
+          // Outro browser ganhou a corrida — apenas resetamos o estado local
+          console.info("[EazyPost] Disparo ignorado — outro browser já assumiu.");
+          firingRef.current = false;
+          setTimerFiring(false);
+          return;
+        }
+        // Atualização já feita — real-time propagará para os demais browsers
+      } else {
+        // Fallback (sem linha no banco ainda): grava normalmente
+        const { error } = await supabase
+          .from("dispatch_config")
+          .update({ next_dispatch_at: newNextIso })
+          .eq("id", 1);
+        if (error) console.error("[EazyPost] Erro ao gravar próximo disparo:", error);
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Chegou aqui = ganhamos o claim. Executamos as ações.
+      // ─────────────────────────────────────────────────────────────────────
       const { loteFoiDisparado, error: filaErr } = await avancarLoteDaVezAction();
       if (filaErr) console.warn("[EazyPost] Erro ao avançar fila de lotes:", filaErr);
 
-      // 2. Dispara o webhook apenas se houver um lote real para disparar
-      // (quando loteFoiDisparado é null, o ciclo foi resetado — sem disparo)
       if (loteFoiDisparado) {
         await tryFireWebhook(loteFoiDisparado);
       }
-
-      // 3. Grava próximo disparo no Supabase — real-time propaga para todos os browsers
-      const { error } = await supabase
-        .from("dispatch_config")
-        .update({ next_dispatch_at: new Date(newNext).toISOString() })
-        .eq("id", 1);
-      if (error) console.error("[EazyPost] Erro ao gravar próximo disparo:", error);
     }
 
     void fire().finally(() => {
-      nextAtRef.current = newNext;
+      nextAtRef.current    = newNextTs;
+      nextAtIsoRef.current = newNextIso;
       setTimerSeconds(TOTAL_SECONDS);
       firingRef.current = false;
       setTimerFiring(false);
