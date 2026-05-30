@@ -1594,15 +1594,19 @@ function Modal({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-app-black/80 px-4">
-      <div className="w-full max-w-xl rounded-lg border border-app-border bg-app-panel p-5">
-        <div className="mb-4 flex items-center justify-between gap-4">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-app-black/80 px-4 py-6">
+      <div className="flex w-full max-w-xl flex-col max-h-[90vh] rounded-lg border border-app-border bg-app-panel">
+        {/* Cabeçalho fixo */}
+        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-app-border px-5 py-4">
           <h2 className="text-lg font-bold text-app-white">{title}</h2>
           <button onClick={onClose} className="rounded-md border border-app-border bg-app-card p-2 text-app-white hover:border-app-green">
             <X size={18} />
           </button>
         </div>
-        {children}
+        {/* Conteúdo rolável */}
+        <div className="overflow-y-auto p-5">
+          {children}
+        </div>
       </div>
     </div>
   );
