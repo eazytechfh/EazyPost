@@ -16,6 +16,7 @@ import { SectionHeader } from "./section-header";
 
 const LOTE_CAPACITY = 16;
 const PAGE_SIZE = 12;
+const NOME_LOTE_VENDIDOS = "Vendidos";
 
 type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor" | "texto_anuncio"> & {
   valor: string;
@@ -811,7 +812,8 @@ export function VeiculosList() {
           {lotes.map((lote) => {
             const count = vehicleCountByLote[lote.id] ?? 0;
             const isActive = loteFilter === lote.id;
-            const isFull = count >= LOTE_CAPACITY;
+            const isVendidos = lote.nome === NOME_LOTE_VENDIDOS;
+            const isFull = !isVendidos && count >= LOTE_CAPACITY;
             const isDaVez = lote.lote_da_vez === true;
             return (
               <div key={lote.id} className="flex items-center gap-0.5">
@@ -827,21 +829,28 @@ export function VeiculosList() {
                   {isDaVez ? <Zap size={11} className="text-yellow-400" /> : <Layers size={11} />}
                   {lote.nome}
                   <span className={`ml-0.5 ${isFull ? "text-orange-400" : "text-app-muted"}`}>
-                    {count}/{LOTE_CAPACITY}
+                    {isVendidos ? count : `${count}/${LOTE_CAPACITY}`}
                   </span>
                 </button>
-                <button
-                  type="button"
-                  title="Marcar como próximo disparo"
-                  onClick={() => void selecionarLoteDaVez(lote.id)}
-                  className={`rounded-l-none rounded-r-md border border-l-0 p-1.5 transition ${
-                    isDaVez
-                      ? "border-yellow-500 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20"
-                      : "border-app-border text-app-muted hover:border-yellow-500 hover:text-yellow-400"
-                  }`}
-                >
-                  <Zap size={10} />
-                </button>
+                {!isVendidos && (
+                  <button
+                    type="button"
+                    title="Marcar como próximo disparo"
+                    onClick={() => void selecionarLoteDaVez(lote.id)}
+                    className={`rounded-l-none rounded-r-md border border-l-0 p-1.5 transition ${
+                      isDaVez
+                        ? "border-yellow-500 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20"
+                        : "border-app-border text-app-muted hover:border-yellow-500 hover:text-yellow-400"
+                    }`}
+                  >
+                    <Zap size={10} />
+                  </button>
+                )}
+                {isVendidos && (
+                  <span className="rounded-l-none rounded-r-md border border-l-0 border-app-border px-1.5 py-1 text-xs text-app-muted">
+                    ∞
+                  </span>
+                )}
               </div>
             );
           })}
@@ -1114,7 +1123,8 @@ function BulkMoverLoteModal({
   onMove: (loteId: string) => void;
   onClose: () => void;
 }) {
-  const [selected, setSelected] = useState<string>(lotes[0]?.id ?? "");
+  const lotesDisponiveis = lotes.filter((l) => l.nome !== NOME_LOTE_VENDIDOS);
+  const [selected, setSelected] = useState<string>(lotesDisponiveis[0]?.id ?? "");
 
   return (
     <Modal title="Mover para Lote (em massa)" onClose={onClose}>
@@ -1123,7 +1133,7 @@ function BulkMoverLoteModal({
       </p>
 
       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-        {lotes.map((lote) => {
+        {lotesDisponiveis.map((lote) => {
           const count = vehicleCountByLote[lote.id] ?? 0;
           const isFull = count >= LOTE_CAPACITY;
           const progress = count / LOTE_CAPACITY;
@@ -1200,7 +1210,8 @@ function MoverLoteModal({
   onMove: (targetLoteId: string | null) => void;
   onClose: () => void;
 }) {
-  const [selected, setSelected] = useState<string>(veiculo.lote_id ?? lotes[0]?.id ?? "");
+  const lotesDisponiveis = lotes.filter((l) => l.nome !== NOME_LOTE_VENDIDOS);
+  const [selected, setSelected] = useState<string>(veiculo.lote_id ?? lotesDisponiveis[0]?.id ?? "");
 
   const currentLoteId = veiculo.lote_id;
   const targetLoteId = selected || null;
@@ -1210,17 +1221,17 @@ function MoverLoteModal({
     const count = vehicleCountByLote[targetLoteId] ?? 0;
     if (count < LOTE_CAPACITY) return null;
 
-    const next = lotes.find((l) => l.id !== targetLoteId && (vehicleCountByLote[l.id] ?? 0) < LOTE_CAPACITY);
+    const next = lotesDisponiveis.find((l) => l.id !== targetLoteId && (vehicleCountByLote[l.id] ?? 0) < LOTE_CAPACITY);
     if (!next) return { bumped: true, nextLote: null as Lote | null };
     return { bumped: true, nextLote: next };
-  }, [targetLoteId, vehicleCountByLote, lotes]);
+  }, [targetLoteId, vehicleCountByLote, lotesDisponiveis]);
 
   return (
     <Modal title="Mover para Lote" onClose={onClose}>
       <p className="mb-4 text-sm text-app-muted truncate">{veiculo.nome_anuncio}</p>
 
       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-        {lotes.map((lote) => {
+        {lotesDisponiveis.map((lote) => {
           const count = vehicleCountByLote[lote.id] ?? 0;
           const isFull = count >= LOTE_CAPACITY;
           const isCurrent = lote.id === currentLoteId;
