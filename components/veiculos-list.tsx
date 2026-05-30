@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import {
-  CalendarClock, Check, CheckSquare, Edit3, Layers, Loader2,
+  CalendarClock, Check, CheckSquare, Edit3, ImagePlus, Layers, Loader2,
   MoreVertical, Search, Square, Trash2, Users, X, Zap
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
@@ -60,6 +60,8 @@ export function VeiculosList() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [editing, setEditing] = useState<Veiculo | null>(null);
   const [editForm, setEditForm] = useState<EditState | null>(null);
+  const [editNewFile, setEditNewFile] = useState<File | null>(null);
+  const [editPreview, setEditPreview] = useState<string | null>(null);
   const [groupVehicle, setGroupVehicle] = useState<Veiculo | null>(null);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [savingGroups, setSavingGroups] = useState(false);
@@ -341,28 +343,62 @@ export function VeiculosList() {
       cor: veiculo.cor,
       texto_anuncio: veiculo.texto_anuncio
     });
+    setEditNewFile(null);
+    setEditPreview(veiculo.imagens?.[0] ?? null);
     setOpenMenu(null);
+  }
+
+  function handleEditImage(file: File | null) {
+    if (!file) return;
+    setEditNewFile(file);
+    setEditPreview(URL.createObjectURL(file));
   }
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editing || !editForm) return;
 
+    const { data: { user } } = await supabase.auth.getUser();
+
+    // Faz upload da nova imagem se o usuário trocou
+    let novasImagens = editing.imagens ?? [];
+    if (editNewFile && user) {
+      const ext = editNewFile.name.split(".").pop() ?? "jpg";
+      const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("veiculos-imagens")
+        .upload(path, editNewFile, { cacheControl: "3600", upsert: false });
+
+      if (uploadErr) { setMessage(uploadErr.message); return; }
+
+      const { data: urlData } = supabase.storage.from("veiculos-imagens").getPublicUrl(path);
+      // Substitui apenas a primeira imagem (thumbnail principal)
+      novasImagens = [urlData.publicUrl, ...novasImagens.slice(1)];
+    }
+
     const { error } = await supabase
       .from("veiculos")
-      .update({ ...editForm, valor: parseCurrencyInput(editForm.valor), updated_at: new Date().toISOString() })
+      .update({
+        ...editForm,
+        valor: parseCurrencyInput(editForm.valor),
+        imagens: novasImagens,
+        updated_at: new Date().toISOString()
+      })
       .eq("id", editing.id);
 
     if (error) { setMessage(error.message); return; }
+
     await registrarLogComCliente(
       supabase,
       `Usuario editou o anuncio [${editForm.nome_anuncio}]`,
       "anuncio",
       editing.id,
-      { antes: { nome_anuncio: editing.nome_anuncio }, depois: editForm }
+      { antes: { nome_anuncio: editing.nome_anuncio }, depois: editForm, imagem_trocada: Boolean(editNewFile) }
     );
     setEditing(null);
     setEditForm(null);
+    setEditNewFile(null);
+    setEditPreview(null);
     await loadData();
   }
 
@@ -931,7 +967,7 @@ export function VeiculosList() {
       )}
 
       {editing && editForm ? (
-        <Modal title="Editar Anuncio" onClose={() => setEditing(null)}>
+        <Modal title="Editar Anuncio" onClose={() => { setEditing(null); setEditNewFile(null); setEditPreview(null); }}>
           <form onSubmit={saveEdit} className="space-y-4">
             <EditInput label="Nome" value={editForm.nome_anuncio} onChange={(value) => setEditForm({ ...editForm, nome_anuncio: value })} />
             <div className="grid gap-4 sm:grid-cols-2">
@@ -946,6 +982,32 @@ export function VeiculosList() {
               <EditInput label="Cor" value={editForm.cor} onChange={(value) => setEditForm({ ...editForm, cor: value })} />
             </div>
             <RichTextEditor value={editForm.texto_anuncio} onChange={(value) => setEditForm({ ...editForm, texto_anuncio: value })} />
+
+            {/* Imagem */}
+            <div className="space-y-2">
+              <span className="app-label">Imagem</span>
+              {editPreview ? (
+                <div className="relative aspect-video w-full overflow-hidden rounded-md border border-app-border">
+                  <Image src={editPreview} alt="Preview" fill unoptimized className="object-cover" />
+                  {editNewFile ? (
+                    <span className="absolute left-2 top-2 rounded-md border border-app-green bg-app-black/80 px-2 py-0.5 text-xs font-bold text-app-green">
+                      Nova imagem
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              <label className="flex cursor-pointer items-center gap-2 rounded-md border border-dashed border-app-border bg-app-panel px-4 py-3 text-sm font-semibold text-app-muted transition hover:border-app-green hover:text-app-white">
+                <ImagePlus size={16} className="text-app-green" />
+                {editPreview ? "Trocar imagem" : "Adicionar imagem"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => handleEditImage(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            </div>
+
             <button className="app-button">
               <Check size={18} />
               Salvar
