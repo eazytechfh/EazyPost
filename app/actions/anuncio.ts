@@ -206,6 +206,21 @@ export async function venderVeiculoAction(
 
   if (moveErr) return { error: moveErr.message };
 
+  // Log: registra qual veículo entrou no Lote Vendidos
+  await supabase.from("logs_auditoria").insert({
+    user_email: user.email ?? "",
+    user_id: user.id,
+    acao: `Veículo [${veiculo.nome_anuncio}] foi movido para o Lote Vendidos`,
+    entidade: "lote_vendidos",
+    entidade_id: vehicleId,
+    detalhes: {
+      veiculo_id: vehicleId,
+      nome_anuncio: veiculo.nome_anuncio,
+      lote_anterior_id: originalLoteId,
+      lote_destino: NOME_LOTE_VENDIDOS
+    }
+  });
+
   // 4. Renumera o lote original (fecha o buraco deixado pelo veículo vendido)
   if (!originalLoteId || originalLoteId === loteVendidosId) return {};
 
