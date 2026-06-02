@@ -110,6 +110,38 @@ export function DashboardShell({
   // Evita que o browser resete o timer mais de uma vez seguida
   const resetingRef  = useRef(false);
 
+  // Função compartilhada: aplica o timing recebido da rota ou do banco
+  function applyTiming(iso: string) {
+    const ts = new Date(iso).getTime();
+    if (!Number.isFinite(ts)) return;
+    nextAtRef.current    = ts;
+    nextAtIsoRef.current = iso;
+    const remaining = Math.round((ts - Date.now()) / 1000);
+    setTimerSeconds(remaining > 0 ? remaining : 0);
+  }
+
+  // Chama a rota e aplica o resultado (usado no init e no tick)
+  function callCronDispatch() {
+    if (resetingRef.current) return;
+    resetingRef.current = true;
+    fetch("/api/cron/dispatch")
+      .then((res) => res.json())
+      .then((data: { ok: boolean; next_dispatch_at?: string; remaining_seconds?: number }) => {
+        if (data.next_dispatch_at) {
+          applyTiming(data.next_dispatch_at);
+        } else if (data.remaining_seconds && data.remaining_seconds > 0) {
+          const futureIso = new Date(Date.now() + data.remaining_seconds * 1000).toISOString();
+          applyTiming(futureIso);
+        }
+      })
+      .catch(() => {
+        // Se a rota falhar, aguarda 30s e tenta de novo
+        const fallbackIso = new Date(Date.now() + 30_000).toISOString();
+        applyTiming(fallbackIso);
+      })
+      .finally(() => { resetingRef.current = false; });
+  }
+
   // 1. Busca o timestamp global do Supabase ao montar
   useEffect(() => {
     async function init() {
@@ -125,22 +157,22 @@ export function DashboardShell({
         if (data?.next_dispatch_at) {
           const iso = data.next_dispatch_at as string;
           const ts  = new Date(iso).getTime();
-          if (Number.isFinite(ts)) {
+          if (Number.isFinite(ts) && ts > Date.now()) {
+            // Timer válido no futuro — usa diretamente (global)
             nextAtRef.current    = ts;
             nextAtIsoRef.current = iso;
-            setTimerSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
+            setTimerSeconds(Math.round((ts - Date.now()) / 1000));
             return;
           }
         }
       } catch (err) {
-        console.warn("[EazyPost] dispatch_config não encontrado, usando timer local:", err);
+        console.warn("[EazyPost] Erro ao ler dispatch_config:", err);
       }
-      // Fallback: sem linha no banco ainda
-      nextAtRef.current    = Date.now() + TOTAL_SECONDS * 1000;
-      nextAtIsoRef.current = null; // sem ISO → claim atômico desabilitado neste fallback
-      setTimerSeconds(TOTAL_SECONDS);
+      // Sem timer válido no banco — chama a rota para criar/sincronizar
+      callCronDispatch();
     }
     void init();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
   // 2. Real-time: sincroniza todos os browsers quando qualquer um disparar
@@ -175,40 +207,7 @@ export function DashboardShell({
     if (nextAtRef.current === null) return;
 
     if (timerSeconds <= 0) {
-      if (resetingRef.current) return;
-      resetingRef.current = true;
-
-      fetch("/api/cron/dispatch")
-        .then((res) => res.json())
-        .then((data: { ok: boolean; next_dispatch_at?: string; remaining_seconds?: number }) => {
-          // SEMPRE atualiza nextAtRef para evitar que o setTimeout recalcule
-          // a partir do timestamp expirado e caia em 0 novamente (loop)
-          if (data.next_dispatch_at) {
-            const ts = new Date(data.next_dispatch_at).getTime();
-            nextAtRef.current    = ts;
-            nextAtIsoRef.current = data.next_dispatch_at;
-            setTimerSeconds(Math.max(2, Math.round((ts - Date.now()) / 1000)));
-          } else if (data.remaining_seconds && data.remaining_seconds > 0) {
-            const futureTs = Date.now() + data.remaining_seconds * 1000;
-            nextAtRef.current    = futureTs;
-            nextAtIsoRef.current = new Date(futureTs).toISOString();
-            setTimerSeconds(data.remaining_seconds);
-          } else {
-            // Sem info de timing — assume 1h a partir de agora
-            const futureTs = Date.now() + TOTAL_SECONDS * 1000;
-            nextAtRef.current    = futureTs;
-            nextAtIsoRef.current = new Date(futureTs).toISOString();
-            setTimerSeconds(TOTAL_SECONDS);
-          }
-        })
-        .catch(() => {
-          // Fallback: se a rota falhar, assume 1h
-          const futureTs = Date.now() + TOTAL_SECONDS * 1000;
-          nextAtRef.current    = futureTs;
-          nextAtIsoRef.current = new Date(futureTs).toISOString();
-          setTimerSeconds(TOTAL_SECONDS);
-        })
-        .finally(() => { resetingRef.current = false; });
+      callCronDispatch();
       return;
     }
 
