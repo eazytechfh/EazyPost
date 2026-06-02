@@ -103,79 +103,44 @@ export function DashboardShell({
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
   // --- timer ---
+  // O browser NUNCA dispara o webhook. Só exibe o countdown lendo do banco.
+  // O disparo é 100% server-side via Vercel Cron (a cada 1 min).
   const [timerSeconds, setTimerSeconds] = useState(TOTAL_SECONDS);
   const [timerFiring] = useState(false);
-  const nextAtRef    = useRef<number | null>(null);
-  const nextAtIsoRef = useRef<string | null>(null);
-  // Evita que o browser resete o timer mais de uma vez seguida
-  const resetingRef  = useRef(false);
+  const nextAtRef = useRef<number | null>(null);
 
-  // Função compartilhada: aplica o timing recebido da rota ou do banco
+  // Aplica o timestamp vindo do banco e calcula os segundos restantes
   function applyTiming(iso: string) {
     const ts = new Date(iso).getTime();
     if (!Number.isFinite(ts)) return;
-    nextAtRef.current    = ts;
-    nextAtIsoRef.current = iso;
+    nextAtRef.current = ts;
     const remaining = Math.round((ts - Date.now()) / 1000);
-    setTimerSeconds(remaining > 0 ? remaining : 0);
+    setTimerSeconds(Math.max(0, remaining));
   }
 
-  // Chama a rota e aplica o resultado (usado no init e no tick)
-  function callCronDispatch() {
-    if (resetingRef.current) return;
-    resetingRef.current = true;
-    fetch("/api/cron/dispatch")
-      .then((res) => res.json())
-      .then((data: { ok: boolean; next_dispatch_at?: string; remaining_seconds?: number }) => {
-        if (data.next_dispatch_at) {
-          applyTiming(data.next_dispatch_at);
-        } else if (data.remaining_seconds && data.remaining_seconds > 0) {
-          const futureIso = new Date(Date.now() + data.remaining_seconds * 1000).toISOString();
-          applyTiming(futureIso);
-        }
-      })
-      .catch(() => {
-        // Se a rota falhar, aguarda 30s e tenta de novo
-        const fallbackIso = new Date(Date.now() + 30_000).toISOString();
-        applyTiming(fallbackIso);
-      })
-      .finally(() => { resetingRef.current = false; });
-  }
-
-  // 1. Busca o timestamp global do Supabase ao montar
+  // 1. Lê o next_dispatch_at do banco ao montar
   useEffect(() => {
     async function init() {
       try {
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from("dispatch_config")
           .select("next_dispatch_at")
           .eq("id", 1)
           .maybeSingle();
 
-        if (error) throw error;
-
         if (data?.next_dispatch_at) {
-          const iso = data.next_dispatch_at as string;
-          const ts  = new Date(iso).getTime();
-          if (Number.isFinite(ts) && ts > Date.now()) {
-            // Timer válido no futuro — usa diretamente (global)
-            nextAtRef.current    = ts;
-            nextAtIsoRef.current = iso;
-            setTimerSeconds(Math.round((ts - Date.now()) / 1000));
-            return;
-          }
+          applyTiming(data.next_dispatch_at as string);
         }
       } catch (err) {
         console.warn("[EazyPost] Erro ao ler dispatch_config:", err);
       }
-      // Sem timer válido no banco — chama a rota para criar/sincronizar
-      callCronDispatch();
     }
     void init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
-  // 2. Real-time: sincroniza todos os browsers quando qualquer um disparar
+  // 2. Real-time: quando o cron disparar e resetar o timer no banco,
+  //    todos os browsers abertos recebem o novo next_dispatch_at automaticamente.
   useEffect(() => {
     const channel = supabase
       .channel("dispatch-config-rt")
@@ -185,12 +150,7 @@ export function DashboardShell({
         (payload) => {
           try {
             const raw = (payload.new as Record<string, unknown>).next_dispatch_at;
-            const iso = raw as string;
-            const ts  = new Date(iso).getTime();
-            if (!Number.isFinite(ts)) return;
-            nextAtRef.current    = ts;
-            nextAtIsoRef.current = iso;
-            setTimerSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
+            applyTiming(raw as string);
           } catch {
             // ignora payload malformado
           }
@@ -201,18 +161,13 @@ export function DashboardShell({
     return () => { void supabase.removeChannel(channel); };
   }, [supabase]);
 
-  // 3. Tick de countdown — ao chegar em 0, chama a rota server-side
-  // que faz o claim atômico, dispara o webhook e reseta o timer no banco.
+  // 3. Tick de countdown — apenas exibe, não dispara nada
   useEffect(() => {
     if (nextAtRef.current === null) return;
-
-    if (timerSeconds <= 0) {
-      callCronDispatch();
-      return;
-    }
+    if (timerSeconds <= 0) return;
 
     const id = setTimeout(() => {
-      const remaining = Math.max(0, Math.round(((nextAtRef.current ?? 0) - Date.now()) / 1000));
+      const remaining = Math.max(0, Math.round((nextAtRef.current! - Date.now()) / 1000));
       setTimerSeconds(remaining);
     }, 1000);
     return () => clearTimeout(id);

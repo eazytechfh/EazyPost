@@ -41,7 +41,8 @@ async function tryFireWebhook(lote: { id: string; nome: string }): Promise<boole
 // Usa service role — não depende de sessão de usuário.
 // ---------------------------------------------------------------------------
 export async function GET(request: NextRequest) {
-  // Segurança: valida CRON_SECRET se configurado na Vercel
+  // Rota chamada exclusivamente pelo Vercel Cron (a cada 1 min) e pelo n8n.
+  // Vercel injeta automaticamente o header Authorization com CRON_SECRET.
   const secret = process.env.CRON_SECRET;
   if (secret) {
     const auth = request.headers.get("authorization");
