@@ -5,46 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, Car, ClipboardList, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
-import { avancarLoteDaVezAction } from "@/app/actions/lotes";
 
-const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
 const TOTAL_SECONDS = 60 * 60;
-
-/**
- * Dispara o webhook com até 4 tentativas (backoff: 0s → 3s → 7s → 15s).
- * Recebe o lote que está sendo disparado para incluir no payload.
- * Sempre resolve — nunca rejeita — para que o timer resete mesmo em falha total.
- */
-async function tryFireWebhook(
-  lote?: { id: string; nome: string } | null
-): Promise<void> {
-  const retryDelays = [0, 3000, 7000, 15000];
-  const body = {
-    disparar: "ok",
-    ...(lote ? { lote_id: lote.id, lote_nome: lote.nome } : {})
-  };
-
-  for (let attempt = 0; attempt < retryDelays.length; attempt++) {
-    if (retryDelays[attempt] > 0) {
-      await new Promise<void>((r) => setTimeout(r, retryDelays[attempt]));
-    }
-    try {
-      const res = await fetch(WEBHOOK_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      if (res.ok) {
-        console.info(`[EazyPost] Webhook disparado — lote: ${lote?.nome ?? "N/A"} (tentativa ${attempt + 1})`);
-        return;
-      }
-      console.warn(`[EazyPost] Webhook HTTP ${res.status} — tentativa ${attempt + 1}/${retryDelays.length}`);
-    } catch (err) {
-      console.warn(`[EazyPost] Webhook erro — tentativa ${attempt + 1}/${retryDelays.length}:`, err);
-    }
-  }
-  console.error("[EazyPost] Webhook falhou após todas as tentativas — timer resetado mesmo assim.");
-}
 
 const navItems = [
   { href: "/dashboard/anuncio", label: "Cadastrar Anuncio", icon: PlusCircle },
@@ -140,12 +102,10 @@ export function DashboardShell({
   const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
-  // --- timer ---
+  // --- timer (display only — disparo feito pelo cron server-side) ---
   const [timerSeconds, setTimerSeconds] = useState(TOTAL_SECONDS);
-  const [timerFiring, setTimerFiring] = useState(false);
-  const firingRef  = useRef(false);
-  const nextAtRef  = useRef<number | null>(null);
-  // ISO string exata vinda do banco — usada no claim atômico (evita duplo disparo)
+  const [timerFiring] = useState(false);
+  const nextAtRef = useRef<number | null>(null);
   const nextAtIsoRef = useRef<string | null>(null);
 
   // 1. Busca o timestamp global do Supabase ao montar
@@ -209,79 +169,17 @@ export function DashboardShell({
     return () => { void supabase.removeChannel(channel); };
   }, [supabase]);
 
-  // 3. Tick de countdown + disparo ao chegar em 0
+  // 3. Tick de countdown — apenas exibição, o disparo é feito pelo cron server-side
   useEffect(() => {
-    if (nextAtRef.current === null) return; // aguarda init
+    if (nextAtRef.current === null) return;
+    if (timerSeconds <= 0) return;
 
-    if (timerSeconds > 0) {
-      const id = setTimeout(() => {
-        const remaining = Math.max(0, Math.round(((nextAtRef.current ?? 0) - Date.now()) / 1000));
-        setTimerSeconds(remaining);
-      }, 1000);
-      return () => clearTimeout(id);
-    }
-
-    // seconds === 0: hora de disparar
-    if (firingRef.current) return;
-    firingRef.current = true;
-    setTimerFiring(true);
-
-    const newNextTs  = Date.now() + TOTAL_SECONDS * 1000;
-    const newNextIso = new Date(newNextTs).toISOString();
-
-    async function fire() {
-      // ─────────────────────────────────────────────────────────────────────
-      // CLAIM ATÔMICO: tenta gravar o próximo disparo usando o valor atual
-      // como condição (WHERE next_dispatch_at = <valor_que_temos>).
-      // Se outro browser/aba já disparou, o UPDATE retorna 0 linhas → abortamos.
-      // ─────────────────────────────────────────────────────────────────────
-      const currentIso = nextAtIsoRef.current;
-
-      if (currentIso) {
-        // Banco tem um valor — usamos claim atômico
-        const { data: claimed } = await supabase
-          .from("dispatch_config")
-          .update({ next_dispatch_at: newNextIso })
-          .eq("id", 1)
-          .eq("next_dispatch_at", currentIso)
-          .select("id");
-
-        if (!claimed || claimed.length === 0) {
-          // Outro browser ganhou a corrida — apenas resetamos o estado local
-          console.info("[EazyPost] Disparo ignorado — outro browser já assumiu.");
-          firingRef.current = false;
-          setTimerFiring(false);
-          return;
-        }
-        // Atualização já feita — real-time propagará para os demais browsers
-      } else {
-        // Fallback (sem linha no banco ainda): grava normalmente
-        const { error } = await supabase
-          .from("dispatch_config")
-          .update({ next_dispatch_at: newNextIso })
-          .eq("id", 1);
-        if (error) console.error("[EazyPost] Erro ao gravar próximo disparo:", error);
-      }
-
-      // ─────────────────────────────────────────────────────────────────────
-      // Chegou aqui = ganhamos o claim. Executamos as ações.
-      // ─────────────────────────────────────────────────────────────────────
-      const { loteFoiDisparado, error: filaErr } = await avancarLoteDaVezAction();
-      if (filaErr) console.warn("[EazyPost] Erro ao avançar fila de lotes:", filaErr);
-
-      if (loteFoiDisparado) {
-        await tryFireWebhook(loteFoiDisparado);
-      }
-    }
-
-    void fire().finally(() => {
-      nextAtRef.current    = newNextTs;
-      nextAtIsoRef.current = newNextIso;
-      setTimerSeconds(TOTAL_SECONDS);
-      firingRef.current = false;
-      setTimerFiring(false);
-    });
-  }, [timerSeconds, supabase]);
+    const id = setTimeout(() => {
+      const remaining = Math.max(0, Math.round(((nextAtRef.current ?? 0) - Date.now()) / 1000));
+      setTimerSeconds(remaining);
+    }, 1000);
+    return () => clearTimeout(id);
+  }, [timerSeconds]);
 
   // --- próximo lote ---
   const [proxLote, setProxLote] = useState<string | null>(null);
