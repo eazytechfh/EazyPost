@@ -181,20 +181,32 @@ export function DashboardShell({
       fetch("/api/cron/dispatch")
         .then((res) => res.json())
         .then((data: { ok: boolean; next_dispatch_at?: string; remaining_seconds?: number }) => {
-          // Usa a resposta da rota para resetar o timer imediatamente,
-          // sem depender do real-time do Supabase
+          // SEMPRE atualiza nextAtRef para evitar que o setTimeout recalcule
+          // a partir do timestamp expirado e caia em 0 novamente (loop)
           if (data.next_dispatch_at) {
             const ts = new Date(data.next_dispatch_at).getTime();
             nextAtRef.current    = ts;
             nextAtIsoRef.current = data.next_dispatch_at;
-            setTimerSeconds(Math.max(1, Math.round((ts - Date.now()) / 1000)));
+            setTimerSeconds(Math.max(2, Math.round((ts - Date.now()) / 1000)));
           } else if (data.remaining_seconds && data.remaining_seconds > 0) {
+            const futureTs = Date.now() + data.remaining_seconds * 1000;
+            nextAtRef.current    = futureTs;
+            nextAtIsoRef.current = new Date(futureTs).toISOString();
             setTimerSeconds(data.remaining_seconds);
+          } else {
+            // Sem info de timing — assume 1h a partir de agora
+            const futureTs = Date.now() + TOTAL_SECONDS * 1000;
+            nextAtRef.current    = futureTs;
+            nextAtIsoRef.current = new Date(futureTs).toISOString();
+            setTimerSeconds(TOTAL_SECONDS);
           }
         })
         .catch(() => {
-          // Fallback: se a rota falhar, aguarda 60s e tenta novamente
-          setTimerSeconds(60);
+          // Fallback: se a rota falhar, assume 1h
+          const futureTs = Date.now() + TOTAL_SECONDS * 1000;
+          nextAtRef.current    = futureTs;
+          nextAtIsoRef.current = new Date(futureTs).toISOString();
+          setTimerSeconds(TOTAL_SECONDS);
         })
         .finally(() => { resetingRef.current = false; });
       return;
