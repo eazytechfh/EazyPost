@@ -177,9 +177,25 @@ export function DashboardShell({
     if (timerSeconds <= 0) {
       if (resetingRef.current) return;
       resetingRef.current = true;
-      // Chama o endpoint server-side: faz tudo (webhook + claim + reset)
+
       fetch("/api/cron/dispatch")
-        .catch(() => {})
+        .then((res) => res.json())
+        .then((data: { ok: boolean; next_dispatch_at?: string; remaining_seconds?: number }) => {
+          // Usa a resposta da rota para resetar o timer imediatamente,
+          // sem depender do real-time do Supabase
+          if (data.next_dispatch_at) {
+            const ts = new Date(data.next_dispatch_at).getTime();
+            nextAtRef.current    = ts;
+            nextAtIsoRef.current = data.next_dispatch_at;
+            setTimerSeconds(Math.max(1, Math.round((ts - Date.now()) / 1000)));
+          } else if (data.remaining_seconds && data.remaining_seconds > 0) {
+            setTimerSeconds(data.remaining_seconds);
+          }
+        })
+        .catch(() => {
+          // Fallback: se a rota falhar, aguarda 60s e tenta novamente
+          setTimerSeconds(60);
+        })
         .finally(() => { resetingRef.current = false; });
       return;
     }

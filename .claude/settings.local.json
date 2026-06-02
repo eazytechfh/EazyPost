@@ -5,7 +5,29 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "Bash(git commit -m 'fix: replace Map spread with Array.from to fix downlevelIteration TS error *)",
-      "Bash(findstr supabase *)"
+      "Bash(findstr supabase *)",
+      "Bash(git commit -m 'feat: add status '\\\\''enviado'\\\\'' \\(roxo\\) ao sistema de status de veiculos *)",
+      "Bash(git commit -m 'fix: atualiza webhook de status vendido para novo endpoint n8n *)",
+      "Bash(git commit -m 'feat: inclui grupos_ids no webhook de status vendido *)",
+      "Bash(git commit -m 'fix: busca grupos_ids direto do banco no webhook de vendido *)",
+      "Bash(npx tsc *)",
+      "Bash(node_modules\\\\.bin\\\\tsc --noEmit)",
+      "Read(//mnt/c/projetos/**)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(git commit -m 'fix: corrige type error result.data possibly undefined no whatsapp-manager *)",
+      "Bash(git commit -m 'fix: corrige endpoint e headers UAZAPI para criacao de instancia *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)",
+      "Bash(git rebase *)",
+      "Bash(git commit -m 'fix: restaura app/actions/anuncio.ts perdido no rebase *)",
+      "mcp__8de3eb7f-130d-4b34-a707-0a71b7d6fbba__list_teams",
+      "mcp__8de3eb7f-130d-4b34-a707-0a71b7d6fbba__get_deployment_build_logs",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(npm run *)",
+      "Bash(./node_modules/.bin/next build *)",
+      "mcp__8de3eb7f-130d-4b34-a707-0a71b7d6fbba__list_projects",
+      "Bash(git commit *)",
+      "Bash(git remote *)"
     ]
   }
 }
