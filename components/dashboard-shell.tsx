@@ -157,8 +157,6 @@ export function DashboardShell({
             nextAtRef.current    = ts;
             nextAtIsoRef.current = iso;
             setTimerSeconds(Math.max(0, Math.round((ts - Date.now()) / 1000)));
-            firingRef.current = false;
-            setTimerFiring(false);
           } catch {
             // ignora payload malformado
           }
