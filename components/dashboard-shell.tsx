@@ -102,11 +102,13 @@ export function DashboardShell({
   const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
-  // --- timer (display only — disparo feito pelo cron server-side) ---
+  // --- timer ---
   const [timerSeconds, setTimerSeconds] = useState(TOTAL_SECONDS);
   const [timerFiring] = useState(false);
-  const nextAtRef = useRef<number | null>(null);
+  const nextAtRef    = useRef<number | null>(null);
   const nextAtIsoRef = useRef<string | null>(null);
+  // Evita que o browser resete o timer mais de uma vez seguida
+  const resetingRef  = useRef(false);
 
   // 1. Busca o timestamp global do Supabase ao montar
   useEffect(() => {
@@ -167,17 +169,58 @@ export function DashboardShell({
     return () => { void supabase.removeChannel(channel); };
   }, [supabase]);
 
-  // 3. Tick de countdown — apenas exibição, o disparo é feito pelo cron server-side
+  // 3. Tick de countdown — ao chegar em 0 o browser reseta o timer no banco.
+  // O WEBHOOK não é disparado aqui — fica exclusivamente com o cron (n8n).
   useEffect(() => {
     if (nextAtRef.current === null) return;
-    if (timerSeconds <= 0) return;
 
-    const id = setTimeout(() => {
-      const remaining = Math.max(0, Math.round(((nextAtRef.current ?? 0) - Date.now()) / 1000));
-      setTimerSeconds(remaining);
-    }, 1000);
-    return () => clearTimeout(id);
-  }, [timerSeconds]);
+    if (timerSeconds > 0) {
+      const id = setTimeout(() => {
+        const remaining = Math.max(0, Math.round(((nextAtRef.current ?? 0) - Date.now()) / 1000));
+        setTimerSeconds(remaining);
+      }, 1000);
+      return () => clearTimeout(id);
+    }
+
+    // Chegou em 0: reseta o next_dispatch_at no banco para que todos os browsers
+    // avancem para o próximo ciclo. O webhook é responsabilidade do cron.
+    if (resetingRef.current) return;
+    resetingRef.current = true;
+
+    const newNextTs  = Date.now() + TOTAL_SECONDS * 1000;
+    const newNextIso = new Date(newNextTs).toISOString();
+    const currentIso = nextAtIsoRef.current;
+
+    async function resetTimer() {
+      if (currentIso) {
+        // Claim atômico: só o primeiro browser que chegar reseta
+        const { data: claimed } = await supabase
+          .from("dispatch_config")
+          .update({ next_dispatch_at: newNextIso })
+          .eq("id", 1)
+          .eq("next_dispatch_at", currentIso)
+          .select("id");
+
+        if (!claimed || claimed.length === 0) {
+          // Outro browser já resetou — aguarda o real-time atualizar
+          resetingRef.current = false;
+          return;
+        }
+      } else {
+        await supabase
+          .from("dispatch_config")
+          .update({ next_dispatch_at: newNextIso })
+          .eq("id", 1);
+      }
+
+      nextAtRef.current    = newNextTs;
+      nextAtIsoRef.current = newNextIso;
+      setTimerSeconds(TOTAL_SECONDS);
+      resetingRef.current = false;
+    }
+
+    void resetTimer();
+  }, [timerSeconds, supabase]);
 
   // --- próximo lote ---
   const [proxLote, setProxLote] = useState<string | null>(null);
