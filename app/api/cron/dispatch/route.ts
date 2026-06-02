@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase-server";
 
-const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook-test/4b4ea55a-7916-4592-b44c-875fc13d7064";
+const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
 const TOTAL_SECONDS = 60 * 60;
 const RETRY_DELAYS = [0, 3000, 7000, 15000];
 const NOME_LOTE_VENDIDOS = "Vendidos";
