@@ -67,7 +67,8 @@ export async function GET(request: NextRequest) {
   // 2. Ainda não é hora de disparar
   if (nextAt > now) {
     const remainingSec = Math.round((nextAt - now) / 1000);
-    return NextResponse.json({ ok: false, reason: "not_yet", remaining_seconds: remainingSec });
+    // Inclui next_dispatch_at para o browser poder resetar o timer
+    return NextResponse.json({ ok: false, reason: "not_yet", remaining_seconds: remainingSec, next_dispatch_at: currentIso });
   }
 
   // 3. Claim atômico: só prossegue quem atualizar o banco primeiro
@@ -82,7 +83,8 @@ export async function GET(request: NextRequest) {
       .select("id");
 
     if (!claimed || claimed.length === 0) {
-      return NextResponse.json({ ok: false, reason: "already_claimed" });
+      // Outro browser ganhou — inclui newNextIso para resetar o timer
+      return NextResponse.json({ ok: false, reason: "already_claimed", next_dispatch_at: newNextIso });
     }
   } else {
     await supabase.from("dispatch_config").update({ next_dispatch_at: newNextIso }).eq("id", 1);
