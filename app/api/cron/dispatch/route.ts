@@ -55,40 +55,52 @@ export async function GET(request: NextRequest) {
   const supabase = createSupabaseServiceClient();
 
   // 1. Lê o próximo disparo agendado
-  const { data: configRaw } = await supabase
+  const { data: configRaw, error: configError } = await supabase
     .from("dispatch_config")
     .select("next_dispatch_at")
     .eq("id", 1)
     .maybeSingle();
 
+  console.log("[dispatch] configRaw:", configRaw, "error:", configError);
+
   const currentIso = (configRaw as { next_dispatch_at: string } | null)?.next_dispatch_at ?? null;
   const nextAt = currentIso ? new Date(currentIso).getTime() : 0;
   const now = Date.now();
 
+  console.log("[dispatch] currentIso:", currentIso, "nextAt:", new Date(nextAt).toISOString(), "now:", new Date(now).toISOString(), "diff_sec:", Math.round((nextAt - now) / 1000));
+
   // 2. Ainda não é hora de disparar
   if (nextAt > now) {
     const remainingSec = Math.round((nextAt - now) / 1000);
-    // Inclui next_dispatch_at para o browser poder resetar o timer
+    console.log("[dispatch] not_yet — remaining:", remainingSec, "s");
     return NextResponse.json({ ok: false, reason: "not_yet", remaining_seconds: remainingSec, next_dispatch_at: currentIso });
   }
 
   // 3. Claim atômico: só prossegue quem atualizar o banco primeiro
   const newNextIso = new Date(now + TOTAL_SECONDS * 1000).toISOString();
+  console.log("[dispatch] claiming — newNextIso:", newNextIso);
 
   if (currentIso) {
-    const { data: claimed } = await supabase
+    const { data: claimed, error: claimError } = await supabase
       .from("dispatch_config")
       .update({ next_dispatch_at: newNextIso })
       .eq("id", 1)
       .eq("next_dispatch_at", currentIso)
       .select("id");
 
+    console.log("[dispatch] claim result:", claimed, "error:", claimError);
+
     if (!claimed || claimed.length === 0) {
-      // Outro browser ganhou — inclui newNextIso para resetar o timer
+      console.log("[dispatch] already_claimed — outro processo ganhou");
       return NextResponse.json({ ok: false, reason: "already_claimed", next_dispatch_at: newNextIso });
     }
   } else {
-    await supabase.from("dispatch_config").update({ next_dispatch_at: newNextIso }).eq("id", 1);
+    console.log("[dispatch] currentIso é null — inserindo diretamente");
+    const { error: insertError } = await supabase
+      .from("dispatch_config")
+      .update({ next_dispatch_at: newNextIso })
+      .eq("id", 1);
+    console.log("[dispatch] insert error:", insertError);
   }
 
   // 4. Busca a fila de lotes ordenada por ativos DESC (mesma lógica do getProgramacaoAction)
