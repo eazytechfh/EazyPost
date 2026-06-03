@@ -21,6 +21,7 @@ type FormState = {
   cor: string;
   fipe: string;
   placa: string;
+  placaLetra: string;
   ano: string;
   tipo: string;
   cambio: string;
