@@ -173,6 +173,34 @@ export function DashboardShell({
     return () => clearTimeout(id);
   }, [timerSeconds]);
 
+  // 4. Polling de fallback — quando o timer está em 00:00, consulta o banco
+  //    a cada 30s até receber um timestamp futuro (caso o real-time falhe).
+  useEffect(() => {
+    if (timerSeconds > 0) return;
+
+    const poll = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from("dispatch_config")
+          .select("next_dispatch_at")
+          .eq("id", 1)
+          .maybeSingle();
+
+        if (data?.next_dispatch_at) {
+          const ts = new Date(data.next_dispatch_at as string).getTime();
+          if (ts > Date.now()) {
+            applyTiming(data.next_dispatch_at as string);
+          }
+        }
+      } catch {
+        // ignora erros de rede
+      }
+    }, 30_000);
+
+    return () => clearInterval(poll);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timerSeconds, supabase]);
+
   // --- próximo lote ---
   const [proxLote, setProxLote] = useState<string | null>(null);
 
