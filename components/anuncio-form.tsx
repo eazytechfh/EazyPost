@@ -191,11 +191,11 @@ export function AnuncioForm() {
 
     try {
       // Verifica placa duplicada
-      const placaCompleta = `${placaCompleta()}`;
+      const placaFinal = placaCompleta();
       const { data: existente } = await supabase
         .from("veiculos")
         .select("id")
-        .eq("placa", placaCompleta)
+        .eq("placa", placaFinal)
         .maybeSingle();
 
       if (existente) {
@@ -215,7 +215,7 @@ export function AnuncioForm() {
         valor: parseCurrencyInput(form.valor),
         cor: form.cor,
         fipe: form.fipe,
-        placa: placaCompleta,
+        placa: placaFinal,
         tipo: form.tipo,
         texto_anuncio: form.texto_anuncio,
         imagens: imageUrls
