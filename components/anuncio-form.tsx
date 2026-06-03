@@ -147,7 +147,7 @@ export function AnuncioForm() {
     updateField("placa", sanitized);
   }
 
-  function placaCompleta() {
+  function placaCompleta(): string {
     return `${form.placaLetra}XX-${form.placa}`;
   }
 
