@@ -62,7 +62,7 @@ ANO: ${ano} | KM: ${km}
 CÂMBIO: ${cambio}
 PNEUS: BONS
 PERÍCIA: APROVA ✅
-PLACA: XXX-${placa}
+PLACA: ${placa}
 
 SEM LEILÃO | SEM SINISTRO ✅
 
@@ -81,6 +81,7 @@ const initialState: FormState = {
   cor: "",
   fipe: "",
   placa: "",
+  placaLetra: "",
   ano: "",
   tipo: "aleatorio",
   cambio: "",
@@ -123,21 +124,30 @@ export function AnuncioForm() {
         valor: current.valor,
         ano: current.ano,
         quilometragem: current.quilometragem,
-        placa: current.placa,
+        placa: `${current.placaLetra}XX-${current.placa}`,
         cambio: current.cambio,
         local: current.local
       })
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.cambio, form.local]);
+  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.placaLetra, form.cambio, form.local]);
 
   function updateField(field: keyof FormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
+  function handlePlacaLetraChange(value: string) {
+    const sanitized = value.replace(/[^a-zA-Z]/g, "").slice(0, 1).toUpperCase();
+    updateField("placaLetra", sanitized);
+  }
+
   function handlePlacaChange(value: string) {
     const sanitized = value.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase();
     updateField("placa", sanitized);
+  }
+
+  function placaCompleta() {
+    return `${form.placaLetra}XX-${form.placa}`;
   }
 
   function handleFiles(nextFiles: FileList | null) {
@@ -180,7 +190,7 @@ export function AnuncioForm() {
 
     try {
       // Verifica placa duplicada
-      const placaCompleta = `XXX-${form.placa}`;
+      const placaCompleta = `${placaCompleta()}`;
       const { data: existente } = await supabase
         .from("veiculos")
         .select("id")
@@ -253,7 +263,7 @@ export function AnuncioForm() {
             </div>
             <h2 className="mb-1 text-lg font-bold text-app-white">PLACA JÁ CADASTRADA</h2>
             <p className="text-sm text-app-muted">
-              A placa <span className="font-bold text-red-400">XXX-{form.placa}</span> já está registrada no sistema.
+              A placa <span className="font-bold text-red-400">{placaCompleta()}</span> já está registrada no sistema.
               Verifique se o veículo já foi cadastrado antes de prosseguir.
             </p>
             <button
@@ -384,15 +394,27 @@ export function AnuncioForm() {
 
           <label className="space-y-2 md:col-span-2">
             <span className="app-label">Placa</span>
-            <div className="flex max-w-xs">
-              <span className="flex items-center rounded-l-md border border-r-0 border-app-border bg-app-panel px-3 text-sm text-app-muted select-none">
-                XXX-
+            <div className="flex max-w-xs items-center">
+              {/* Primeira letra — editável */}
+              <input
+                className="app-input w-10 rounded-r-none text-center uppercase"
+                value={form.placaLetra}
+                onChange={(e) => handlePlacaLetraChange(e.target.value)}
+                maxLength={1}
+                placeholder="A"
+                required
+              />
+              {/* Prefixo fixo */}
+              <span className="flex items-center border border-x-0 border-app-border bg-app-panel px-2 text-sm text-app-muted select-none h-10">
+                XX-
               </span>
+              {/* Últimos 4 caracteres — editáveis */}
               <input
                 className="app-input rounded-l-none"
                 value={form.placa}
-                onChange={(event) => handlePlacaChange(event.target.value)}
+                onChange={(e) => handlePlacaChange(e.target.value)}
                 maxLength={4}
+                placeholder="0000"
                 required
               />
             </div>
