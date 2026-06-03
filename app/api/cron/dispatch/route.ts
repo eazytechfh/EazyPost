@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase-server";
 
+// Garante que a rota nunca seja cacheada pela Vercel
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
 const TOTAL_SECONDS = 60 * 60;
 const RETRY_DELAYS = [0, 3000, 7000, 15000];
