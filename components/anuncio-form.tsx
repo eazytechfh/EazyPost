@@ -32,6 +32,12 @@ type FormState = {
 // ---------------------------------------------------------------------------
 // Template do anúncio
 // ---------------------------------------------------------------------------
+function parseFipeToBRL(fipe: string): number {
+  const cleaned = fipe.replace(/R\$\s*/g, "").trim();
+  const normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  return parseFloat(normalized) || 0;
+}
+
 function buildAnuncioTemplate(fields: {
   nome_anuncio: string;
   fipe: string;
@@ -54,9 +60,14 @@ function buildAnuncioTemplate(fields: {
   const cambio = fields.cambio || "[CÂMBIO]";
   const local = fields.local || "[LOCAL]";
 
+  const fipeNum = parseFipeToBRL(fields.fipe);
+  const corte = fipeNum > 0 && valorNum > 0 && fipeNum > valorNum
+    ? new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2 }).format(fipeNum - valorNum)
+    : null;
+
   return `${nome}
 
-💸 FIPE: ${fipe}
+${corte ? `✂️ CORTE: ${corte} ABAIXO DA FIPE\n` : ""}💸 FIPE: ${fipe}
 💰 VALOR: ${valorDisplay}
 
 ANO: ${ano} | KM: ${km}

@@ -18,7 +18,7 @@ const LOTE_CAPACITY = 16;
 const PAGE_SIZE = 12;
 const NOME_LOTE_VENDIDOS = "Vendidos";
 
-type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor" | "texto_anuncio"> & {
+type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor" | "texto_anuncio" | "fipe" | "placa" | "tipo"> & {
   valor: string;
 };
 
@@ -342,6 +342,9 @@ export function VeiculosList() {
       motor: veiculo.motor,
       valor: String(Math.trunc(veiculo.valor)),
       cor: veiculo.cor,
+      fipe: veiculo.fipe,
+      placa: veiculo.placa,
+      tipo: veiculo.tipo,
       texto_anuncio: veiculo.texto_anuncio
     });
     setEditNewFile(null);
@@ -988,7 +991,16 @@ export function VeiculosList() {
                 inputMode="numeric"
                 onChange={(value) => setEditForm({ ...editForm, valor: cleanCurrencyInput(value) })}
               />
+              <EditInput label="FIPE" value={editForm.fipe} onChange={(value) => setEditForm({ ...editForm, fipe: value })} />
               <EditInput label="Cor" value={editForm.cor} onChange={(value) => setEditForm({ ...editForm, cor: value })} />
+              <EditInput label="Placa" value={editForm.placa} onChange={(value) => setEditForm({ ...editForm, placa: value.toUpperCase() })} />
+              <label className="space-y-2">
+                <span className="app-label">Tipo</span>
+                <select className="app-input" value={editForm.tipo} onChange={(e) => setEditForm({ ...editForm, tipo: e.target.value })} required>
+                  <option value="aleatorio">ALEATÓRIO</option>
+                  <option value="prioridade">PRIORIDADE</option>
+                </select>
+              </label>
             </div>
             <RichTextEditor value={editForm.texto_anuncio} onChange={(value) => setEditForm({ ...editForm, texto_anuncio: value })} />
 
