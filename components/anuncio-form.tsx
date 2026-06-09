@@ -26,6 +26,10 @@ type FormState = {
   tipo: string;
   cambio: string;
   local: string;
+  pneus: string;
+  pericia_aprova: boolean;
+  pericia_motivo: string;
+  leilao: boolean;
   texto_anuncio: string;
 };
 
@@ -41,6 +45,10 @@ function buildAnuncioTemplate(fields: {
   placa: string;
   cambio: string;
   local: string;
+  pneus: string;
+  pericia_aprova: boolean;
+  pericia_motivo: string;
+  leilao: boolean;
 }) {
   const nome = fields.nome_anuncio || "[Nome do Anúncio]";
   const fipe = fields.fipe || "[FIPE]";
@@ -53,6 +61,11 @@ function buildAnuncioTemplate(fields: {
   const placa = fields.placa ? fields.placa.toUpperCase() : "[PLACA]";
   const cambio = fields.cambio || "[CÂMBIO]";
   const local = fields.local || "[LOCAL]";
+  const pneus = fields.pneus || "[PNEUS]";
+  const pericia = fields.pericia_aprova
+    ? "APROVA ✅"
+    : `NÃO APROVA ❌${fields.pericia_motivo ? ` - ${fields.pericia_motivo}` : ""}`;
+  const leilaoLinha = fields.leilao ? "COM LEILÃO | SEM SINISTRO ✅" : "SEM LEILÃO | SEM SINISTRO ✅";
 
   return `${nome}
 
@@ -61,11 +74,11 @@ function buildAnuncioTemplate(fields: {
 
 ANO: ${ano} | KM: ${km}
 CÂMBIO: ${cambio}
-PNEUS: BONS
-PERÍCIA: APROVA ✅
+PNEUS: ${pneus}
+PERÍCIA: ${pericia}
 PLACA: ${placa}
 
-SEM LEILÃO | SEM SINISTRO ✅
+${leilaoLinha}
 
 PAGAMENTO NO CARTÃO DE CRÉDITO EM ATÉ 24X, FINANCIAMENTO EM TODOS OS BANCOS, SEM ENTRADA, SUJEITO À ANÁLISE DE CRÉDITO. CONSULTE NOSSOS VENDEDORES
 
@@ -87,9 +100,14 @@ const initialState: FormState = {
   tipo: "aleatorio",
   cambio: "",
   local: "",
+  pneus: "",
+  pericia_aprova: true,
+  pericia_motivo: "",
+  leilao: false,
   texto_anuncio: buildAnuncioTemplate({
     nome_anuncio: "", fipe: "", valor: "", ano: "",
-    quilometragem: "", placa: "", cambio: "", local: ""
+    quilometragem: "", placa: "", cambio: "", local: "",
+    pneus: "", pericia_aprova: true, pericia_motivo: "", leilao: false
   })
 };
 
@@ -127,13 +145,17 @@ export function AnuncioForm() {
         quilometragem: current.quilometragem,
         placa: `${current.placaLetra}XX-${current.placa}`,
         cambio: current.cambio,
-        local: current.local
+        local: current.local,
+        pneus: current.pneus,
+        pericia_aprova: current.pericia_aprova,
+        pericia_motivo: current.pericia_motivo,
+        leilao: current.leilao
       })
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.placaLetra, form.cambio, form.local]);
+  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.placaLetra, form.cambio, form.local, form.pneus, form.pericia_aprova, form.pericia_motivo, form.leilao]);
 
-  function updateField(field: keyof FormState, value: string) {
+  function updateField(field: keyof FormState, value: string | boolean) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
@@ -369,6 +391,78 @@ export function AnuncioForm() {
               required
             />
           </label>
+
+          <label className="space-y-2">
+            <span className="app-label">Pneus</span>
+            <input
+              className="app-input"
+              value={form.pneus}
+              onChange={(event) => updateField("pneus", event.target.value)}
+              placeholder="Ex: BONS"
+              required
+            />
+          </label>
+
+          <div className="space-y-2 md:col-span-2">
+            <span className="app-label">Perícia Aprova?</span>
+            <div className="flex gap-4">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                <input
+                  type="radio"
+                  name="pericia_aprova"
+                  className="accent-app-green h-4 w-4"
+                  checked={form.pericia_aprova === true}
+                  onChange={() => updateField("pericia_aprova", true)}
+                />
+                SIM
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                <input
+                  type="radio"
+                  name="pericia_aprova"
+                  className="accent-app-green h-4 w-4"
+                  checked={form.pericia_aprova === false}
+                  onChange={() => updateField("pericia_aprova", false)}
+                />
+                NÃO
+              </label>
+            </div>
+            {form.pericia_aprova === false && (
+              <input
+                className="app-input mt-2"
+                value={form.pericia_motivo}
+                onChange={(event) => updateField("pericia_motivo", event.target.value)}
+                placeholder="Informe o motivo"
+                required
+              />
+            )}
+          </div>
+
+          <div className="space-y-2 md:col-span-2">
+            <span className="app-label">Leilão?</span>
+            <div className="flex gap-4">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                <input
+                  type="radio"
+                  name="leilao"
+                  className="accent-app-green h-4 w-4"
+                  checked={form.leilao === false}
+                  onChange={() => updateField("leilao", false)}
+                />
+                NÃO (padrão)
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                <input
+                  type="radio"
+                  name="leilao"
+                  className="accent-app-green h-4 w-4"
+                  checked={form.leilao === true}
+                  onChange={() => updateField("leilao", true)}
+                />
+                SIM
+              </label>
+            </div>
+          </div>
 
           <label className="space-y-2">
             <span className="app-label">Tipo</span>

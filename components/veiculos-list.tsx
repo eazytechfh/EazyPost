@@ -20,6 +20,10 @@ const NOME_LOTE_VENDIDOS = "Vendidos";
 
 type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor" | "texto_anuncio" | "fipe" | "placa" | "tipo"> & {
   valor: string;
+  pneus: string;
+  pericia_aprova: boolean;
+  pericia_motivo: string;
+  leilao: boolean;
 };
 
 type LinkedGroupsByVehicle = Record<string, IdDosGrupos[]>;
@@ -36,6 +40,36 @@ const STATUS_CONFIG: Record<VehicleStatus, { label: string; badge: string; dot: 
   devolvido: { label: "Devolvido", badge: "border-orange-500 text-orange-400",  dot: "bg-orange-400",  chip: "border-app-border text-app-muted hover:border-orange-500 hover:text-orange-400",   activeChip: "border-orange-500 text-orange-400 bg-orange-500/10" },
   enviado:   { label: "Enviado",   badge: "border-purple-500 text-purple-400",  dot: "bg-purple-400",  chip: "border-app-border text-app-muted hover:border-purple-500 hover:text-purple-400",   activeChip: "border-purple-500 text-purple-400 bg-purple-500/10" },
 };
+
+function extractFromTexto(texto: string, field: "pneus" | "pericia" | "leilao") {
+  if (field === "pneus") {
+    const m = texto.match(/^PNEUS:\s*(.+)$/m);
+    return m ? m[1].trim() : "";
+  }
+  if (field === "leilao") {
+    return texto.match(/^COM LEILÃO/m) ? "sim" : "nao";
+  }
+  return texto.match(/^PERÍCIA:\s*APROVA/m) ? "sim" : "nao";
+}
+
+function extractMotivo(texto: string): string {
+  const m = texto.match(/^PERÍCIA:\s*NÃO APROVA[^-\n]*(?:\s*-\s*(.+))?$/m);
+  return m?.[1]?.trim() ?? "";
+}
+
+function updateTextoLine(texto: string, field: "pneus" | "pericia" | "leilao", value: string, motivo?: string): string {
+  if (field === "pneus") {
+    return texto.replace(/^(PNEUS:).*$/m, `$1 ${value || "[PNEUS]"}`);
+  }
+  if (field === "leilao") {
+    const linha = value === "sim" ? "COM LEILÃO | SEM SINISTRO ✅" : "SEM LEILÃO | SEM SINISTRO ✅";
+    return texto.replace(/^(COM|SEM) LEILÃO.*$/m, linha);
+  }
+  const pericia = value === "sim"
+    ? "PERÍCIA: APROVA ✅"
+    : `PERÍCIA: NÃO APROVA ❌${motivo ? ` - ${motivo}` : ""}`;
+  return texto.replace(/^PERÍCIA:.*$/m, pericia);
+}
 
 function computeInsertIndex(veiculo: Veiculo, sorted: Veiculo[]): number {
   if (veiculo.tipo === "prioridade") {
@@ -336,6 +370,7 @@ export function VeiculosList() {
   // -------------------------------------------------------------------------
   function beginEdit(veiculo: Veiculo) {
     setEditing(veiculo);
+    const texto = veiculo.texto_anuncio;
     setEditForm({
       nome_anuncio: veiculo.nome_anuncio,
       quilometragem: veiculo.quilometragem,
@@ -345,7 +380,11 @@ export function VeiculosList() {
       fipe: veiculo.fipe,
       placa: veiculo.placa,
       tipo: veiculo.tipo,
-      texto_anuncio: veiculo.texto_anuncio
+      texto_anuncio: texto,
+      pneus: extractFromTexto(texto, "pneus"),
+      pericia_aprova: extractFromTexto(texto, "pericia") === "sim",
+      pericia_motivo: extractMotivo(texto),
+      leilao: extractFromTexto(texto, "leilao") === "sim"
     });
     setEditNewFile(null);
     setEditPreview(veiculo.imagens?.[0] ?? null);
@@ -1001,6 +1040,96 @@ export function VeiculosList() {
                   <option value="prioridade">PRIORIDADE</option>
                 </select>
               </label>
+              <label className="space-y-2">
+                <span className="app-label">Pneus</span>
+                <input
+                  className="app-input"
+                  value={editForm.pneus}
+                  placeholder="Ex: BONS"
+                  onChange={(e) => {
+                    const pneus = e.target.value;
+                    setEditForm({
+                      ...editForm,
+                      pneus,
+                      texto_anuncio: updateTextoLine(editForm.texto_anuncio, "pneus", pneus)
+                    });
+                  }}
+                />
+              </label>
+            </div>
+            <div className="space-y-2">
+              <span className="app-label">Perícia Aprova?</span>
+              <div className="flex gap-4">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                  <input
+                    type="radio"
+                    name="edit_pericia"
+                    className="accent-app-green h-4 w-4"
+                    checked={editForm.pericia_aprova === true}
+                    onChange={() => {
+                      const texto = updateTextoLine(editForm.texto_anuncio, "pericia", "sim");
+                      setEditForm({ ...editForm, pericia_aprova: true, pericia_motivo: "", texto_anuncio: texto });
+                    }}
+                  />
+                  SIM
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                  <input
+                    type="radio"
+                    name="edit_pericia"
+                    className="accent-app-green h-4 w-4"
+                    checked={editForm.pericia_aprova === false}
+                    onChange={() => {
+                      const texto = updateTextoLine(editForm.texto_anuncio, "pericia", "nao", editForm.pericia_motivo);
+                      setEditForm({ ...editForm, pericia_aprova: false, texto_anuncio: texto });
+                    }}
+                  />
+                  NÃO
+                </label>
+              </div>
+              {editForm.pericia_aprova === false && (
+                <input
+                  className="app-input mt-2"
+                  value={editForm.pericia_motivo}
+                  placeholder="Informe o motivo"
+                  onChange={(e) => {
+                    const motivo = e.target.value;
+                    const texto = updateTextoLine(editForm.texto_anuncio, "pericia", "nao", motivo);
+                    setEditForm({ ...editForm, pericia_motivo: motivo, texto_anuncio: texto });
+                  }}
+                />
+              )}
+            </div>
+            <div className="space-y-2">
+              <span className="app-label">Leilão?</span>
+              <div className="flex gap-4">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                  <input
+                    type="radio"
+                    name="edit_leilao"
+                    className="accent-app-green h-4 w-4"
+                    checked={editForm.leilao === false}
+                    onChange={() => {
+                      const texto = updateTextoLine(editForm.texto_anuncio, "leilao", "nao");
+                      setEditForm({ ...editForm, leilao: false, texto_anuncio: texto });
+                    }}
+                  />
+                  NÃO (padrão)
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                  <input
+                    type="radio"
+                    name="edit_leilao"
+                    className="accent-app-green h-4 w-4"
+                    checked={editForm.leilao === true}
+                    onChange={() => {
+                      const texto = updateTextoLine(editForm.texto_anuncio, "leilao", "sim");
+                      setEditForm({ ...editForm, leilao: true, texto_anuncio: texto });
+                    }}
+                  />
+                  SIM
+                </label>
+              </div>
             </div>
             <RichTextEditor value={editForm.texto_anuncio} onChange={(value) => setEditForm({ ...editForm, texto_anuncio: value })} />
 
