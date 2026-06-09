@@ -155,7 +155,7 @@ export function AnuncioForm() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.placaLetra, form.cambio, form.local, form.pneus, form.pericia_aprova, form.pericia_motivo, form.leilao]);
 
-  function updateField(field: keyof FormState, value: string | boolean) {
+  function updateField<K extends keyof FormState>(field: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
