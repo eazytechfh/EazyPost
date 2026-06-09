@@ -419,10 +419,12 @@ export function VeiculosList() {
       novasImagens = [urlData.publicUrl, ...novasImagens.slice(1)];
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { pneus: _p, pericia_aprova: _pa, pericia_motivo: _pm, leilao: _l, ...dbFields } = editForm;
     const { error } = await supabase
       .from("veiculos")
       .update({
-        ...editForm,
+        ...dbFields,
         valor: parseCurrencyInput(editForm.valor),
         imagens: novasImagens,
         updated_at: new Date().toISOString()
