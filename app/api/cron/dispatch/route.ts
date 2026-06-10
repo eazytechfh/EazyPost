@@ -55,6 +55,16 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Sem disparo aos domingos (horário de Brasília — America/Sao_Paulo, UTC-3, sem DST)
+  const diaSemana = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "short",
+  }).format(new Date());
+
+  if (diaSemana === "Sun") {
+    return NextResponse.json({ ok: false, reason: "sunday_skip" });
+  }
+
   // Service role: ignora RLS, não precisa de sessão/login
   const supabase = createSupabaseServiceClient();
 
