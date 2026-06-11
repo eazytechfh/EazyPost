@@ -319,7 +319,7 @@ export async function rebalancearLotesAction(): Promise<{
   }
 
   // 7. Renumera posições nos lotes de origem para fechar as lacunas
-  for (const loteId of lotesComExcesso) {
+  for (const loteId of Array.from(lotesComExcesso)) {
     const { data: restantes } = await supabase
       .from("veiculos")
       .select("id")
