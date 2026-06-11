@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Loader2, Shield, ShieldOff, Trash2, UserPlus, X } from "lucide-react";
+import { Check, Layers, Loader2, Shield, ShieldOff, Trash2, UserPlus, X } from "lucide-react";
 import {
   createUserAction,
   deleteUserAction,
   listUsersAction,
   toggleAdminAction
 } from "@/app/actions/admin";
+import { rebalancearLotesAction } from "@/app/actions/lotes";
 import { SectionHeader } from "./section-header";
 
 type UserRow = {
@@ -28,6 +29,14 @@ export function AdminUsuarios() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [rebalancing, setRebalancing] = useState(false);
+  const [rebalanceResult, setRebalanceResult] = useState<{
+    lotesAfetados: number;
+    veiculosMigrados: number;
+    novosLotesCriados: number;
+    error?: string;
+  } | null>(null);
+  const [confirmRebalance, setConfirmRebalance] = useState(false);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -83,6 +92,15 @@ export function AdminUsuarios() {
     } else {
       await loadUsers();
     }
+  }
+
+  async function handleRebalancear() {
+    setRebalancing(true);
+    setRebalanceResult(null);
+    const result = await rebalancearLotesAction();
+    setRebalanceResult(result);
+    setRebalancing(false);
+    setConfirmRebalance(false);
   }
 
   return (
@@ -211,6 +229,60 @@ export function AdminUsuarios() {
           </div>
         </div>
       )}
+
+      {/* Manutenção de Lotes */}
+      <div className="mt-10">
+        <h3 className="mb-1 text-sm font-semibold text-app-white">Manutenção de Lotes</h3>
+        <p className="mb-4 text-xs text-app-muted">
+          Move os veículos excedentes (além de 10 por lote) para lotes com espaço disponível ou cria novos lotes automaticamente.
+        </p>
+
+        {rebalanceResult ? (
+          <div className={`mb-4 rounded-md border p-3 text-sm ${rebalanceResult.error ? "border-red-500/40 bg-red-500/10 text-red-400" : "border-app-green/40 bg-app-green/10 text-app-green"}`}>
+            {rebalanceResult.error ? (
+              rebalanceResult.error
+            ) : rebalanceResult.veiculosMigrados === 0 ? (
+              "Nenhum lote com excesso encontrado. Todos os lotes já têm 10 veículos ou menos."
+            ) : (
+              <>
+                <span className="font-bold">{rebalanceResult.veiculosMigrados}</span> veículo{rebalanceResult.veiculosMigrados !== 1 ? "s" : ""} redistribuído{rebalanceResult.veiculosMigrados !== 1 ? "s" : ""} de{" "}
+                <span className="font-bold">{rebalanceResult.lotesAfetados}</span> lote{rebalanceResult.lotesAfetados !== 1 ? "s" : ""}.
+                {rebalanceResult.novosLotesCriados > 0 && (
+                  <> <span className="font-bold">{rebalanceResult.novosLotesCriados}</span> novo{rebalanceResult.novosLotesCriados !== 1 ? "s lotes criados" : " lote criado"}.</>
+                )}
+              </>
+            )}
+          </div>
+        ) : null}
+
+        {confirmRebalance ? (
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-app-muted">Confirmar rebalanceamento?</span>
+            <button
+              onClick={() => void handleRebalancear()}
+              disabled={rebalancing}
+              className="flex items-center gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-sm font-semibold text-yellow-400 hover:bg-yellow-500/20 disabled:opacity-50 transition"
+            >
+              {rebalancing ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Confirmar
+            </button>
+            <button
+              onClick={() => setConfirmRebalance(false)}
+              className="rounded-md border border-app-border px-3 py-2 text-sm text-app-muted hover:text-app-white transition"
+            >
+              Cancelar
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => { setConfirmRebalance(true); setRebalanceResult(null); }}
+            className="flex items-center gap-2 rounded-md border border-app-border bg-app-card px-3 py-2 text-sm font-semibold text-app-muted hover:border-yellow-500 hover:text-yellow-400 transition"
+          >
+            <Layers size={14} />
+            Rebalancear Lotes
+          </button>
+        )}
+      </div>
 
       {/* Modal criar usuário */}
       {showCreate ? (

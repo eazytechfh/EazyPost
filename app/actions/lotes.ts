@@ -2,6 +2,8 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
+const LOTE_CAPACITY = 10;
+
 // ---------------------------------------------------------------------------
 // Registra um log gerado automaticamente pelo sistema (sem sessão de usuário)
 // ---------------------------------------------------------------------------
@@ -199,4 +201,151 @@ export async function avancarLoteDaVezAction(): Promise<{
   return {
     loteFoiDisparado: { id: loteDisparado.id, nome: loteDisparado.nome }
   };
+}
+
+// ---------------------------------------------------------------------------
+// Rebalanceia lotes: move veículos excedentes (posição > LOTE_CAPACITY) para
+// lotes com espaço disponível, criando novos lotes se necessário.
+// ---------------------------------------------------------------------------
+export async function rebalancearLotesAction(): Promise<{
+  lotesAfetados: number;
+  veiculosMigrados: number;
+  novosLotesCriados: number;
+  error?: string;
+}> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { lotesAfetados: 0, veiculosMigrados: 0, novosLotesCriados: 0, error: "Não autenticado." };
+
+  // 1. Busca todos os lotes exceto Vendidos, em ordem de criação
+  const { data: lotesRaw, error: lotesErr } = await supabase
+    .from("lotes")
+    .select("id, nome")
+    .neq("nome", "Vendidos")
+    .order("created_at", { ascending: true });
+
+  if (lotesErr) return { lotesAfetados: 0, veiculosMigrados: 0, novosLotesCriados: 0, error: lotesErr.message };
+
+  const lotes = (lotesRaw ?? []) as { id: string; nome: string }[];
+  if (lotes.length === 0) return { lotesAfetados: 0, veiculosMigrados: 0, novosLotesCriados: 0 };
+
+  // 2. Busca todos os veículos não-vendidos desses lotes, ordenados por posição
+  const { data: veiculosRaw } = await supabase
+    .from("veiculos")
+    .select("id, lote_id, posicao_lote")
+    .not("lote_id", "is", null)
+    .neq("status", "vendido")
+    .in("lote_id", lotes.map((l) => l.id))
+    .order("posicao_lote", { ascending: true });
+
+  const veiculos = (veiculosRaw ?? []) as { id: string; lote_id: string; posicao_lote: number }[];
+
+  // 3. Agrupa veículos por lote mantendo a ordem
+  const porLote = new Map<string, { id: string; lote_id: string; posicao_lote: number }[]>();
+  for (const lote of lotes) porLote.set(lote.id, []);
+  for (const v of veiculos) {
+    const arr = porLote.get(v.lote_id);
+    if (arr) arr.push(v);
+  }
+
+  // 4. Identifica excedentes (veículos além do LOTE_CAPACITY em cada lote)
+  const excedentes: { id: string; lote_id: string }[] = [];
+  const lotesComExcesso = new Set<string>();
+
+  for (const lote of lotes) {
+    const arr = porLote.get(lote.id) ?? [];
+    if (arr.length > LOTE_CAPACITY) {
+      excedentes.push(...arr.slice(LOTE_CAPACITY).map((v) => ({ id: v.id, lote_id: v.lote_id })));
+      lotesComExcesso.add(lote.id);
+    }
+  }
+
+  if (excedentes.length === 0) return { lotesAfetados: 0, veiculosMigrados: 0, novosLotesCriados: 0 };
+
+  // 5. Contagem in-memory por lote (apenas os que ficam, descontando excedentes)
+  const contagens = new Map<string, number>();
+  for (const lote of lotes) {
+    const arr = porLote.get(lote.id) ?? [];
+    contagens.set(lote.id, Math.min(arr.length, LOTE_CAPACITY));
+  }
+
+  let novosLotesCriados = 0;
+  let veiculosMigrados = 0;
+  const lotesDestinoNovos: { id: string; nome: string }[] = [];
+
+  // 6. Realoca cada excedente para o primeiro lote com espaço (ou cria novo)
+  for (const exc of excedentes) {
+    let destino: { id: string; nome: string } | null = null;
+
+    for (const lote of [...lotes, ...lotesDestinoNovos]) {
+      if (lote.id === exc.lote_id) continue;
+      if ((contagens.get(lote.id) ?? 0) < LOTE_CAPACITY) {
+        destino = lote;
+        break;
+      }
+    }
+
+    // Nenhum lote disponível — cria um novo
+    if (!destino) {
+      const totalAtual = lotes.length + lotesDestinoNovos.length;
+      const nomeLote = `Lote ${totalAtual + 1}`;
+      const { data: novoLote, error: loteErr } = await supabase
+        .from("lotes")
+        .insert({ user_id: user.id, nome: nomeLote, lote_da_vez: false })
+        .select("id, nome")
+        .single();
+
+      if (loteErr || !novoLote) continue;
+
+      const nl = novoLote as { id: string; nome: string };
+      lotesDestinoNovos.push(nl);
+      contagens.set(nl.id, 0);
+      novosLotesCriados++;
+      destino = nl;
+    }
+
+    const novaPosicao = (contagens.get(destino.id) ?? 0) + 1;
+
+    const { error: moveErr } = await supabase
+      .from("veiculos")
+      .update({ lote_id: destino.id, posicao_lote: novaPosicao })
+      .eq("id", exc.id);
+
+    if (!moveErr) {
+      contagens.set(destino.id, novaPosicao);
+      veiculosMigrados++;
+    }
+  }
+
+  // 7. Renumera posições nos lotes de origem para fechar as lacunas
+  for (const loteId of lotesComExcesso) {
+    const { data: restantes } = await supabase
+      .from("veiculos")
+      .select("id")
+      .eq("lote_id", loteId)
+      .neq("status", "vendido")
+      .order("posicao_lote", { ascending: true });
+
+    if (!restantes) continue;
+
+    await Promise.all(
+      (restantes as { id: string }[]).map((v, idx) =>
+        supabase.from("veiculos").update({ posicao_lote: idx + 1 }).eq("id", v.id)
+      )
+    );
+  }
+
+  // 8. Log
+  await registrarLogSistema(
+    `Rebalanceamento de lotes: ${veiculosMigrados} veículo${veiculosMigrados !== 1 ? "s" : ""} redistribuído${veiculosMigrados !== 1 ? "s" : ""} de ${lotesComExcesso.size} lote${lotesComExcesso.size !== 1 ? "s" : ""}`,
+    {
+      acao: "rebalanceamento_lotes",
+      lotes_com_excesso: lotesComExcesso.size,
+      veiculos_migrados: veiculosMigrados,
+      novos_lotes_criados: novosLotesCriados
+    }
+  );
+
+  return { lotesAfetados: lotesComExcesso.size, veiculosMigrados, novosLotesCriados };
 }

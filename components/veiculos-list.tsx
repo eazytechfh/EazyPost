@@ -14,7 +14,7 @@ import type { AnuncioGrupo, IdDosGrupos, Lote, Veiculo } from "@/types/database"
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
 
-const LOTE_CAPACITY = 16;
+const LOTE_CAPACITY = 10;
 const PAGE_SIZE = 12;
 const NOME_LOTE_VENDIDOS = "Vendidos";
 

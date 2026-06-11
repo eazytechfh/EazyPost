@@ -6,7 +6,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { getProgramacaoAction, sincronizarFilaAction, type LoteProgramacao } from "@/app/actions/lotes";
 import { SectionHeader } from "./section-header";
 
-const LOTE_CAPACITY = 16;
+const LOTE_CAPACITY = 10;
 
 // ---------------------------------------------------------------------------
 // Badge "DA VEZ"

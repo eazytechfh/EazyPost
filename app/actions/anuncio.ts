@@ -4,7 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 type ActionResult<T> = { data: T; error?: never } | { data?: never; error: string };
 
-const LOTE_CAPACITY = 16;
+const LOTE_CAPACITY = 10;
 const NOME_LOTE_VENDIDOS = "Vendidos";
 
 type VehiclePayload = {
