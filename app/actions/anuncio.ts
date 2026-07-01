@@ -1,11 +1,12 @@
 "use server";
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { NOME_LOTE_VENDIDOS, proximoNumeroLote } from "@/lib/lote-queue";
+import { renumerarLotesAction } from "@/app/actions/lotes";
 
 type ActionResult<T> = { data: T; error?: never } | { data?: never; error: string };
 
 const LOTE_CAPACITY = 10;
-const NOME_LOTE_VENDIDOS = "Vendidos";
 
 type VehiclePayload = {
   nome_anuncio: string;
@@ -80,10 +81,9 @@ export async function criarAnuncioAction(
 
   // 5. Se não houver lote com espaço, cria um novo automaticamente
   if (!targetLote) {
-    const totalLotes = lotesList.length;
-    const nomeLote = `Lote ${totalLotes + 1}`;
+    const nomeLote = `Lote ${proximoNumeroLote(lotesList.map((l) => l.nome))}`;
     // Primeiro lote é automaticamente marcado como "da vez"
-    const ehPrimeiro = totalLotes === 0;
+    const ehPrimeiro = lotesList.filter((l) => l.nome !== NOME_LOTE_VENDIDOS).length === 0;
 
     const { data: novoLote, error: loteErr } = await supabase
       .from("lotes")
@@ -221,7 +221,12 @@ export async function venderVeiculoAction(
     }
   });
 
-  // 4. Renumera o lote original (fecha o buraco deixado pelo veículo vendido)
+  // 3.1 Renumera a sequência de nomes dos lotes (fecha buracos/duplicatas
+  // como "Lote 6, 8, 10" -> "Lote 6, 7, 8"), sempre que uma venda acontece.
+  await renumerarLotesAction();
+
+  // 4. Renumera as posições dos veículos no lote original (fecha o buraco
+  // de posição deixado pelo veículo vendido)
   if (!originalLoteId || originalLoteId === loteVendidosId) return {};
 
   const { data: remainingRaw } = await supabase

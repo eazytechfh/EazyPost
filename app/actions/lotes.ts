@@ -1,6 +1,12 @@
 "use server";
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import {
+  NOME_LOTE_VENDIDOS,
+  ordenarLotesPorNumero,
+  proximoNumeroLote,
+  selecionarProximoLoteSequencial
+} from "@/lib/lote-queue";
 
 const LOTE_CAPACITY = 10;
 
@@ -39,9 +45,8 @@ export type LoteProgramacao = {
 };
 
 // ---------------------------------------------------------------------------
-// Retorna lotes ordenados pela fila de disparo:
-// 1º critério: veículos ativos DESC
-// 2º critério: total de veículos DESC
+// Retorna lotes ordenados pela sequência numérica do nome (Lote 1, 2, 3...),
+// que é a mesma ordem seguida pela fila circular de disparo.
 // ---------------------------------------------------------------------------
 export async function getProgramacaoAction(): Promise<{
   data: LoteProgramacao[];
@@ -50,7 +55,7 @@ export async function getProgramacaoAction(): Promise<{
   const supabase = createSupabaseServerClient();
 
   const [lotesResult, allVehiclesResult, activeVehiclesResult] = await Promise.all([
-    supabase.from("lotes").select("id, nome, lote_da_vez, created_at").neq("nome", "Vendidos"),
+    supabase.from("lotes").select("id, nome, lote_da_vez, created_at").neq("nome", NOME_LOTE_VENDIDOS),
     supabase.from("veiculos").select("lote_id").not("lote_id", "is", null),
     supabase
       .from("veiculos")
@@ -74,7 +79,7 @@ export async function getProgramacaoAction(): Promise<{
     activeMap.set(lid, (activeMap.get(lid) ?? 0) + 1);
   }
 
-  const list = (lotesResult.data ?? []).map((lote) => ({
+  const semOrdenar = (lotesResult.data ?? []).map((lote) => ({
     id: lote.id,
     nome: lote.nome as string,
     lote_da_vez: lote.lote_da_vez as boolean,
@@ -84,12 +89,8 @@ export async function getProgramacaoAction(): Promise<{
     posicao: 0
   }));
 
-  // Ordenação: ativos DESC → total DESC → criação ASC
-  list.sort((a, b) => {
-    if (b.veiculos_ativos !== a.veiculos_ativos) return b.veiculos_ativos - a.veiculos_ativos;
-    if (b.total_veiculos !== a.total_veiculos) return b.total_veiculos - a.total_veiculos;
-    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-  });
+  // Ordenação: sequência numérica do lote (1, 2, 3, ...)
+  const list = ordenarLotesPorNumero(semOrdenar);
 
   // Atribui posição
   list.forEach((l, i) => { l.posicao = i + 1; });
@@ -98,8 +99,9 @@ export async function getProgramacaoAction(): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// Sincroniza o flag lote_da_vez no banco para o topo da fila ordenada
-// (maior volume de veículos ativos). Chamado ao montar a página Programação.
+// Sincroniza o flag lote_da_vez no banco para o próximo lote elegível na
+// sequência circular (1, 2, 3, ..., N, 1, 2, ...). Chamado ao montar a
+// página Programação.
 // ---------------------------------------------------------------------------
 export async function sincronizarFilaAction(): Promise<{ error?: string }> {
   const supabase = createSupabaseServerClient();
@@ -107,7 +109,8 @@ export async function sincronizarFilaAction(): Promise<{ error?: string }> {
   const { data: programacao, error } = await getProgramacaoAction();
   if (error) return { error };
 
-  const elegíveis = programacao.filter((l) => l.veiculos_ativos > 0);
+  const ativosPorId = new Map(programacao.map((l) => [l.id, l.veiculos_ativos]));
+  const proximo = selecionarProximoLoteSequencial(programacao, ativosPorId);
 
   // Limpa todos os flags
   await supabase
@@ -115,20 +118,20 @@ export async function sincronizarFilaAction(): Promise<{ error?: string }> {
     .update({ lote_da_vez: false })
     .neq("id", "00000000-0000-0000-0000-000000000000");
 
-  // Marca o topo da fila (mais ativos) como lote_da_vez
-  if (elegíveis.length > 0) {
+  if (proximo) {
     await supabase
       .from("lotes")
       .update({ lote_da_vez: true })
-      .eq("id", elegíveis[0].id);
+      .eq("id", proximo.id);
   }
 
   return {};
 }
 
 // ---------------------------------------------------------------------------
-// Dispara o lote no topo da fila ordenada (maior volume de ativos).
-// Retorna o lote que foi disparado (para payload do webhook).
+// Dispara o próximo lote elegível na sequência circular (1, 2, 3, ..., N,
+// 1, 2, ...), a partir de onde parou (lote_da_vez). Retorna o lote que foi
+// disparado (para payload do webhook).
 // ---------------------------------------------------------------------------
 export async function avancarLoteDaVezAction(): Promise<{
   loteFoiDisparado: { id: string; nome: string } | null;
@@ -139,10 +142,10 @@ export async function avancarLoteDaVezAction(): Promise<{
   const { data: programacao, error } = await getProgramacaoAction();
   if (error || !programacao.length) return { loteFoiDisparado: null, error };
 
-  // Lotes com pelo menos 1 veículo ativo (já ordenados por ativos DESC)
-  const elegíveis = programacao.filter((l) => l.veiculos_ativos > 0);
+  const ativosPorId = new Map(programacao.map((l) => [l.id, l.veiculos_ativos]));
+  const proximo = selecionarProximoLoteSequencial(programacao, ativosPorId);
 
-  if (!elegíveis.length) {
+  if (!proximo) {
     // Nenhum lote ativo — verifica se há veículos "enviado" para reiniciar o ciclo
     const { count: enviadosCount } = await supabase
       .from("veiculos")
@@ -171,8 +174,8 @@ export async function avancarLoteDaVezAction(): Promise<{
     return { loteFoiDisparado: null };
   }
 
-  // O topo da fila (posição 1 = mais ativos) é quem dispara agora
-  const loteDisparado = elegíveis[0];
+  // Próximo lote da sequência circular é quem dispara agora
+  const loteDisparado = proximo;
 
   // Limpa todos os flags
   await supabase
@@ -180,7 +183,8 @@ export async function avancarLoteDaVezAction(): Promise<{
     .update({ lote_da_vez: false })
     .neq("id", "00000000-0000-0000-0000-000000000000");
 
-  // Mantém o topo como lote_da_vez (próximo disparo = quem tiver mais ativos)
+  // Marca o lote disparado como lote_da_vez — na próxima chamada a fila
+  // avança para o próximo elegível na sequência (1, 2, 3, ..., N, 1, ...)
   const { error: setErr } = await supabase
     .from("lotes")
     .update({ lote_da_vez: true })
@@ -288,8 +292,8 @@ export async function rebalancearLotesAction(): Promise<{
 
     // Nenhum lote disponível — cria um novo
     if (!destino) {
-      const totalAtual = lotes.length + lotesDestinoNovos.length;
-      const nomeLote = `Lote ${totalAtual + 1}`;
+      const nomesExistentes = [...lotes, ...lotesDestinoNovos].map((l) => l.nome);
+      const nomeLote = `Lote ${proximoNumeroLote(nomesExistentes)}`;
       const { data: novoLote, error: loteErr } = await supabase
         .from("lotes")
         .insert({ user_id: user.id, nome: nomeLote, lote_da_vez: false })
@@ -348,4 +352,52 @@ export async function rebalancearLotesAction(): Promise<{
   );
 
   return { lotesAfetados: lotesComExcesso.size, veiculosMigrados, novosLotesCriados };
+}
+
+// ---------------------------------------------------------------------------
+// Renumera todos os lotes (exceto "Vendidos") em ordem de criação, fechando
+// buracos (ex.: 6, 8, 10 -> 6, 7, 8) e corrigindo nomes duplicados que podem
+// ter surgido de criações concorrentes. Chamado automaticamente sempre que
+// um veículo é vendido (ver venderVeiculoAction) e também pode ser disparado
+// manualmente pela tela de Programação para corrigir o histórico existente.
+// ---------------------------------------------------------------------------
+export async function renumerarLotesAction(): Promise<{
+  lotesRenomeados: number;
+  error?: string;
+}> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: lotesRaw, error: lotesErr } = await supabase
+    .from("lotes")
+    .select("id, nome, created_at")
+    .neq("nome", NOME_LOTE_VENDIDOS)
+    .order("created_at", { ascending: true });
+
+  if (lotesErr) return { lotesRenomeados: 0, error: lotesErr.message };
+
+  const lotes = (lotesRaw ?? []) as { id: string; nome: string; created_at: string }[];
+  const ordenados = ordenarLotesPorNumero(lotes);
+
+  let lotesRenomeados = 0;
+
+  for (let i = 0; i < ordenados.length; i++) {
+    const nomeCorreto = `Lote ${i + 1}`;
+    if (ordenados[i].nome === nomeCorreto) continue;
+
+    const { error: updateErr } = await supabase
+      .from("lotes")
+      .update({ nome: nomeCorreto })
+      .eq("id", ordenados[i].id);
+
+    if (!updateErr) lotesRenomeados++;
+  }
+
+  if (lotesRenomeados > 0) {
+    await registrarLogSistema(
+      `Sistema renumerou ${lotesRenomeados} lote${lotesRenomeados !== 1 ? "s" : ""} para fechar buracos/duplicatas na sequência`,
+      { acao: "lotes_renumerados", lotes_renomeados: lotesRenomeados }
+    );
+  }
+
+  return { lotesRenomeados };
 }

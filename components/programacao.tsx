@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, Loader2, RefreshCw, Zap } from "lucide-react";
+import { CalendarClock, RotateCcw, Loader2, RefreshCw, Zap } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
-import { getProgramacaoAction, sincronizarFilaAction, type LoteProgramacao } from "@/app/actions/lotes";
+import { getProgramacaoAction, renumerarLotesAction, sincronizarFilaAction, type LoteProgramacao } from "@/app/actions/lotes";
+import { selecionarProximoLoteSequencial } from "@/lib/lote-queue";
 import { SectionHeader } from "./section-header";
 
 const LOTE_CAPACITY = 10;
@@ -46,21 +47,20 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
 // ---------------------------------------------------------------------------
 function LoteCard({
   lote,
-  isFirst
+  isProximo
 }: {
   lote: LoteProgramacao;
-  isFirst: boolean;
+  isProximo: boolean;
 }) {
-  // PRÓXIMO é sempre a posição 1 da fila ordenada (mais ativos), nunca o flag do banco
-  const isDaVez = isFirst && lote.veiculos_ativos > 0;
+  // PRÓXIMO é o lote seguinte na sequência circular (1, 2, 3, ..., N, 1, ...)
+  // a partir de onde a fila parou — nunca só a posição 1.
+  const isDaVez = isProximo;
 
   return (
     <div
       className={`rounded-lg border p-4 transition ${
         isDaVez
           ? "border-yellow-500/60 bg-yellow-500/5"
-          : isFirst && lote.veiculos_ativos > 0
-          ? "border-app-green/40 bg-app-green/5"
           : "border-app-border bg-app-panel"
       }`}
     >
@@ -70,8 +70,6 @@ function LoteCard({
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-sm font-bold ${
             isDaVez
               ? "border-yellow-500 bg-yellow-500/10 text-yellow-400"
-              : isFirst && lote.veiculos_ativos > 0
-              ? "border-app-green bg-app-green/10 text-app-green"
               : "border-app-border bg-app-card text-app-muted"
           }`}
         >
@@ -125,6 +123,7 @@ export function Programacao() {
   const [lotes, setLotes] = useState<LoteProgramacao[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [atualizando, setAtualizando] = useState(false);
+  const [renumerando, setRenumerando] = useState(false);
 
   const load = useCallback(async () => {
     const result = await getProgramacaoAction();
@@ -164,26 +163,47 @@ export function Programacao() {
     setAtualizando(false);
   }
 
+  async function handleRenumerar() {
+    setRenumerando(true);
+    await renumerarLotesAction();
+    await sincronizarFilaAction();
+    await load();
+    setRenumerando(false);
+  }
+
   const totalAtivos = lotes.reduce((s, l) => s + l.veiculos_ativos, 0);
   const totalVeiculos = lotes.reduce((s, l) => s + l.total_veiculos, 0);
-  // Próximo = posição 1 da fila (mais ativos), independente do flag no banco
-  const proxLote = lotes.find((l) => l.veiculos_ativos > 0) ?? lotes[0];
+  // Próximo = próximo elegível na sequência circular (1, 2, 3, ..., N, 1, ...)
+  // a partir do lote_da_vez, nunca só o de maior volume.
+  const ativosPorId = useMemo(() => new Map(lotes.map((l) => [l.id, l.veiculos_ativos])), [lotes]);
+  const proxLote = selecionarProximoLoteSequencial(lotes, ativosPorId) ?? undefined;
 
   return (
     <section className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <SectionHeader
           title="Programação de Disparo"
-          description="Fila automática ordenada por volume de veículos ativos. O lote no topo dispara próximo."
+          description="Fila circular pela sequência numérica dos lotes (1, 2, 3, ..., N, 1, ...). Lotes esgotados são pulados até voltarem a ter veículos ativos."
         />
-        <button
-          onClick={handleRefresh}
-          disabled={atualizando || carregando}
-          className="shrink-0 flex items-center gap-2 rounded-md border border-app-border bg-app-card px-3 py-2 text-sm font-semibold text-app-muted hover:text-app-white disabled:opacity-50 transition"
-        >
-          <RefreshCw size={14} className={atualizando ? "animate-spin" : ""} />
-          Atualizar
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={handleRenumerar}
+            disabled={renumerando || carregando}
+            title="Renomeia os lotes em ordem de criação, fechando buracos e duplicatas na numeração"
+            className="flex items-center gap-2 rounded-md border border-app-border bg-app-card px-3 py-2 text-sm font-semibold text-app-muted hover:text-app-white disabled:opacity-50 transition"
+          >
+            <RotateCcw size={14} className={renumerando ? "animate-spin" : ""} />
+            Renumerar lotes
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={atualizando || carregando}
+            className="flex items-center gap-2 rounded-md border border-app-border bg-app-card px-3 py-2 text-sm font-semibold text-app-muted hover:text-app-white disabled:opacity-50 transition"
+          >
+            <RefreshCw size={14} className={atualizando ? "animate-spin" : ""} />
+            Atualizar
+          </button>
+        </div>
       </div>
 
       {/* Resumo */}
@@ -226,10 +246,10 @@ export function Programacao() {
           <div className="flex items-center gap-2 text-xs text-app-muted px-1">
             <span className="font-semibold">ORDEM DE DISPARO</span>
             <span className="text-app-border">—</span>
-            <span>maior volume de ativos primeiro</span>
+            <span>sequência numérica dos lotes, em loop</span>
           </div>
-          {lotes.map((lote, i) => (
-            <LoteCard key={lote.id} lote={lote} isFirst={i === 0} />
+          {lotes.map((lote) => (
+            <LoteCard key={lote.id} lote={lote} isProximo={proxLote?.id === lote.id} />
           ))}
         </div>
       )}

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase-server";
+import {
+  NOME_LOTE_VENDIDOS,
+  ordenarLotesPorNumero,
+  selecionarProximoLoteSequencial
+} from "@/lib/lote-queue";
 
 // Garante que a rota nunca seja cacheada pela Vercel
 export const dynamic = "force-dynamic";
@@ -8,7 +13,6 @@ export const revalidate = 0;
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
 const TOTAL_SECONDS = 60 * 60;
 const RETRY_DELAYS = [0, 3000, 7000, 15000];
-const NOME_LOTE_VENDIDOS = "Vendidos";
 
 // ---------------------------------------------------------------------------
 // Dispara webhook com retry — body sempre inclui lote_id e lote_nome
@@ -117,39 +121,28 @@ export async function GET(request: NextRequest) {
     console.log("[dispatch] insert error:", insertError);
   }
 
-  // 4. Busca a fila de lotes ordenada por ativos DESC (mesma lógica do getProgramacaoAction)
-  const [lotesResult, ativosResult, totalResult] = await Promise.all([
-    supabase.from("lotes").select("id, nome, created_at").neq("nome", NOME_LOTE_VENDIDOS),
-    supabase.from("veiculos").select("lote_id").eq("status", "ativo").not("lote_id", "is", null),
-    supabase.from("veiculos").select("lote_id").not("lote_id", "is", null)
+  // 4. Busca a fila de lotes na sequência numérica (Lote 1, 2, 3, ...) e
+  // avança em ordem circular a partir do último lote disparado (lote_da_vez).
+  const [lotesResult, ativosResult] = await Promise.all([
+    supabase.from("lotes").select("id, nome, lote_da_vez, created_at").neq("nome", NOME_LOTE_VENDIDOS),
+    supabase.from("veiculos").select("lote_id").eq("status", "ativo").not("lote_id", "is", null)
   ]);
 
-  const lotes = (lotesResult.data ?? []) as { id: string; nome: string; created_at: string }[];
+  const lotes = (lotesResult.data ?? []) as { id: string; nome: string; lote_da_vez: boolean; created_at: string }[];
   const ativosMap = new Map<string, number>();
-  const totalMap  = new Map<string, number>();
 
   (ativosResult.data ?? []).forEach((v) => {
     const lid = (v as { lote_id: string }).lote_id;
     ativosMap.set(lid, (ativosMap.get(lid) ?? 0) + 1);
   });
-  (totalResult.data ?? []).forEach((v) => {
-    const lid = (v as { lote_id: string }).lote_id;
-    totalMap.set(lid, (totalMap.get(lid) ?? 0) + 1);
-  });
 
-  // Ordena: ativos DESC → total DESC → created_at ASC
-  const sorted = [...lotes].sort((a, b) => {
-    const da = (ativosMap.get(b.id) ?? 0) - (ativosMap.get(a.id) ?? 0);
-    if (da !== 0) return da;
-    const dt = (totalMap.get(b.id) ?? 0) - (totalMap.get(a.id) ?? 0);
-    if (dt !== 0) return dt;
-    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-  });
+  // Ordena pela sequência numérica do nome do lote (1, 2, 3, ...)
+  const sorted = ordenarLotesPorNumero(lotes);
 
-  const elegiveis = sorted.filter((l) => (ativosMap.get(l.id) ?? 0) > 0);
+  const proximo = selecionarProximoLoteSequencial(sorted, ativosMap);
 
   // 5. Sem lotes ativos — verifica reset de ciclo
-  if (elegiveis.length === 0) {
+  if (!proximo) {
     const { count: enviadosCount } = await supabase
       .from("veiculos")
       .select("id", { count: "exact", head: true })
@@ -183,8 +176,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: true, lote: null, webhook_fired: false, next_dispatch_at: newNextIso });
   }
 
-  // 6. Lote do topo da fila — atualiza flag lote_da_vez
-  const loteDisparado = elegiveis[0];
+  // 6. Próximo lote da sequência circular — atualiza flag lote_da_vez
+  const loteDisparado = proximo;
 
   await supabase.from("lotes").update({ lote_da_vez: false }).neq("id", "00000000-0000-0000-0000-000000000000");
   await supabase.from("lotes").update({ lote_da_vez: true }).eq("id", loteDisparado.id);

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, Car, ClipboardList, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
+import { ordenarLotesPorNumero, selecionarProximoLoteSequencial } from "@/lib/lote-queue";
 
 const TOTAL_SECONDS = 60 * 60;
 
@@ -206,42 +207,30 @@ export function DashboardShell({
 
   useEffect(() => {
     async function fetchProxLote() {
-      // Usa o mesmo critério de ordenação do getProgramacaoAction:
-      // ativos DESC → total DESC → created_at ASC
-      const [veiculosResult, totalResult, lotesResult] = await Promise.all([
+      // Usa o mesmo critério da fila circular do cron: sequência numérica
+      // do lote (1, 2, 3, ...), avançando a partir do lote_da_vez.
+      const [veiculosResult, lotesResult] = await Promise.all([
         supabase.from("veiculos").select("lote_id").eq("status", "ativo").not("lote_id", "is", null),
-        supabase.from("veiculos").select("lote_id").not("lote_id", "is", null),
-        supabase.from("lotes").select("id, nome, created_at").neq("nome", "Vendidos").order("created_at", { ascending: true })
+        supabase.from("lotes").select("id, nome, lote_da_vez, created_at").neq("nome", "Vendidos")
       ]);
 
-      const lotes = (lotesResult.data ?? []) as { id: string; nome: string; created_at: string }[];
+      const lotes = (lotesResult.data ?? []) as { id: string; nome: string; lote_da_vez: boolean; created_at: string }[];
       if (!lotes.length) { setProxLote(null); return; }
 
-      // Conta ativos e totais por lote
+      // Conta ativos por lote
       const ativosMap = new Map<string, number>();
-      const totalMap  = new Map<string, number>();
 
       (veiculosResult.data ?? [] as { lote_id: string }[]).forEach((v) => {
         const lid = (v as { lote_id: string }).lote_id;
         ativosMap.set(lid, (ativosMap.get(lid) ?? 0) + 1);
       });
-      (totalResult.data ?? [] as { lote_id: string }[]).forEach((v) => {
-        const lid = (v as { lote_id: string }).lote_id;
-        totalMap.set(lid, (totalMap.get(lid) ?? 0) + 1);
-      });
 
-      // Ordena igual à fila: ativos DESC → total DESC → created_at ASC
-      const sorted = [...lotes].sort((a, b) => {
-        const diffAtivos = (ativosMap.get(b.id) ?? 0) - (ativosMap.get(a.id) ?? 0);
-        if (diffAtivos !== 0) return diffAtivos;
-        const diffTotal = (totalMap.get(b.id) ?? 0) - (totalMap.get(a.id) ?? 0);
-        if (diffTotal !== 0) return diffTotal;
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-      });
+      // Ordena pela sequência numérica do lote (1, 2, 3, ...)
+      const sorted = ordenarLotesPorNumero(lotes);
 
-      // Topo da fila com pelo menos 1 ativo
-      const top = sorted.find((l) => (ativosMap.get(l.id) ?? 0) > 0) ?? sorted[0];
-      setProxLote(top?.nome ?? null);
+      // Próximo elegível na sequência circular a partir do lote_da_vez
+      const proximo = selecionarProximoLoteSequencial(sorted, ativosMap);
+      setProxLote(proximo?.nome ?? null);
     }
     void fetchProxLote();
 
