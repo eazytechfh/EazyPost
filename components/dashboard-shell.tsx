@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, Car, ClipboardList, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
-import { ordenarLotesPorNumero, selecionarProximoLoteSequencial } from "@/lib/lote-queue";
+import { calcularStatusDisparo, ordenarLotesPorNumero, selecionarProximoLoteSequencial } from "@/lib/lote-queue";
 
 const TOTAL_SECONDS = 60 * 60;
+const HORAS_PERMITIDAS_PADRAO = [9, 10, 13, 14, 15, 16, 17];
 
 const navItems = [
   { href: "/dashboard/anuncio", label: "Cadastrar Anuncio", icon: PlusCircle },
@@ -26,14 +27,39 @@ const adminNavItems = [
 // CountdownTimer — componente puro de exibição (sem lógica de estado própria)
 // ---------------------------------------------------------------------------
 function CountdownTimer({
-  seconds,
-  firing,
+  status,
   compact = false
 }: {
-  seconds: number;
-  firing: boolean;
+  status: import("@/lib/lote-queue").StatusDisparo;
   compact?: boolean;
 }) {
+  const horaFormatada = `${String(status.proximaHora).padStart(2, "0")}:00`;
+
+  if (status.modo === "aguardando") {
+    if (compact) {
+      return (
+        <div className="flex items-center gap-1.5 text-sm font-bold tabular-nums text-app-muted">
+          <Timer size={14} />
+          <span>{horaFormatada}</span>
+        </div>
+      );
+    }
+    return (
+      <div className="mx-0 my-4 rounded-md border border-app-border bg-app-card p-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-2 border-app-border text-app-muted">
+            <Timer size={18} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xl font-bold tabular-nums leading-none text-app-muted">{horaFormatada}</p>
+            <p className="mt-1 text-xs text-app-muted">Próximo horário de disparo</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const seconds = status.segundosRestantes;
   const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
   const secs = String(seconds % 60).padStart(2, "0");
   const display = `${minutes}:${secs}`;
@@ -52,8 +78,7 @@ function CountdownTimer({
     return (
       <div className={`flex items-center gap-1.5 text-sm font-bold tabular-nums ${colorClass}`}>
         <Timer size={14} />
-        <span>{firing ? "..." : display}</span>
-        {firing ? <span className="text-xs text-app-muted">●</span> : null}
+        <span>{display}</span>
       </div>
     );
   }
@@ -77,10 +102,8 @@ function CountdownTimer({
           <Timer size={14} className={`absolute inset-0 m-auto ${colorClass}`} />
         </div>
         <div className="min-w-0">
-          <p className={`text-xl font-bold tabular-nums leading-none ${colorClass}`}>
-            {firing ? "Disparando..." : display}
-          </p>
-          <p className="mt-1 text-xs text-app-muted">Próximo disparo</p>
+          <p className={`text-xl font-bold tabular-nums leading-none ${colorClass}`}>{display}</p>
+          <p className="mt-1 text-xs text-app-muted">Próximo disparo às {horaFormatada}</p>
         </div>
       </div>
     </div>
@@ -104,44 +127,36 @@ export function DashboardShell({
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
   // --- timer ---
-  // O browser NUNCA dispara o webhook. Só exibe o countdown lendo do banco.
-  // O disparo é 100% server-side via Vercel Cron (a cada 1 min).
-  const [timerSeconds, setTimerSeconds] = useState(TOTAL_SECONDS);
-  const [timerFiring] = useState(false);
-  const nextAtRef = useRef<number | null>(null);
+  // O browser NUNCA dispara o webhook. O status exibido (contagem regressiva
+  // ou "aguardando próximo horário") é calculado 100% no cliente a partir dos
+  // horários permitidos e do relógio — o disparo em si é server-side (Vercel Cron).
+  const [horasPermitidas, setHorasPermitidas] = useState<number[]>(HORAS_PERMITIDAS_PADRAO);
+  const [dispatchStatus, setDispatchStatus] = useState(() =>
+    calcularStatusDisparo(HORAS_PERMITIDAS_PADRAO, new Date())
+  );
 
-  // Aplica o timestamp vindo do banco e calcula os segundos restantes
-  function applyTiming(iso: string) {
-    const ts = new Date(iso).getTime();
-    if (!Number.isFinite(ts)) return;
-    nextAtRef.current = ts;
-    const remaining = Math.round((ts - Date.now()) / 1000);
-    setTimerSeconds(Math.max(0, remaining));
-  }
-
-  // 1. Lê o next_dispatch_at do banco ao montar
+  // 1. Lê os horários permitidos do banco ao montar
   useEffect(() => {
     async function init() {
       try {
         const { data } = await supabase
           .from("dispatch_config")
-          .select("next_dispatch_at")
+          .select("horas_permitidas")
           .eq("id", 1)
           .maybeSingle();
 
-        if (data?.next_dispatch_at) {
-          applyTiming(data.next_dispatch_at as string);
+        if (data?.horas_permitidas?.length) {
+          setHorasPermitidas(data.horas_permitidas as number[]);
         }
       } catch (err) {
         console.warn("[EazyPost] Erro ao ler dispatch_config:", err);
       }
     }
     void init();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
-  // 2. Real-time: quando o cron disparar e resetar o timer no banco,
-  //    todos os browsers abertos recebem o novo next_dispatch_at automaticamente.
+  // 2. Real-time: se o admin alterar os horários permitidos, todos os
+  //    browsers abertos recebem a atualização automaticamente.
   useEffect(() => {
     const channel = supabase
       .channel("dispatch-config-rt")
@@ -149,11 +164,9 @@ export function DashboardShell({
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "dispatch_config" },
         (payload) => {
-          try {
-            const raw = (payload.new as Record<string, unknown>).next_dispatch_at;
-            applyTiming(raw as string);
-          } catch {
-            // ignora payload malformado
+          const raw = (payload.new as Record<string, unknown>).horas_permitidas;
+          if (Array.isArray(raw) && raw.length) {
+            setHorasPermitidas(raw as number[]);
           }
         }
       )
@@ -162,45 +175,13 @@ export function DashboardShell({
     return () => { void supabase.removeChannel(channel); };
   }, [supabase]);
 
-  // 3. Tick de countdown — apenas exibe, não dispara nada
+  // 3. Tick de 1s — recalcula o status (contagem ou aguardando) a cada segundo
   useEffect(() => {
-    if (nextAtRef.current === null) return;
-    if (timerSeconds <= 0) return;
-
-    const id = setTimeout(() => {
-      const remaining = Math.max(0, Math.round((nextAtRef.current! - Date.now()) / 1000));
-      setTimerSeconds(remaining);
+    const id = setInterval(() => {
+      setDispatchStatus(calcularStatusDisparo(horasPermitidas, new Date()));
     }, 1000);
-    return () => clearTimeout(id);
-  }, [timerSeconds]);
-
-  // 4. Polling de fallback — quando o timer está em 00:00, consulta o banco
-  //    a cada 30s até receber um timestamp futuro (caso o real-time falhe).
-  useEffect(() => {
-    if (timerSeconds > 0) return;
-
-    const poll = setInterval(async () => {
-      try {
-        const { data } = await supabase
-          .from("dispatch_config")
-          .select("next_dispatch_at")
-          .eq("id", 1)
-          .maybeSingle();
-
-        if (data?.next_dispatch_at) {
-          const ts = new Date(data.next_dispatch_at as string).getTime();
-          if (ts > Date.now()) {
-            applyTiming(data.next_dispatch_at as string);
-          }
-        }
-      } catch {
-        // ignora erros de rede
-      }
-    }, 30_000);
-
-    return () => clearInterval(poll);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timerSeconds, supabase]);
+    return () => clearInterval(id);
+  }, [horasPermitidas]);
 
   // --- próximo lote ---
   const [proxLote, setProxLote] = useState<string | null>(null);
@@ -266,7 +247,7 @@ export function DashboardShell({
           </div>
         </Link>
 
-        <CountdownTimer seconds={timerSeconds} firing={timerFiring} />
+        <CountdownTimer status={dispatchStatus} />
 
         <div className="mb-4 rounded-md border border-app-border bg-app-card px-3 py-2.5">
           <p className="text-xs text-app-muted">Próximo lote de disparo</p>
@@ -336,7 +317,7 @@ export function DashboardShell({
             Eazy<span className="text-app-green">Post</span>
           </Link>
           <div className="flex items-center gap-3">
-            <CountdownTimer seconds={timerSeconds} firing={timerFiring} compact />
+            <CountdownTimer status={dispatchStatus} compact />
             <button onClick={handleLogout} className="rounded-md border border-app-border bg-app-card p-2 text-app-white">
               <LogOut size={18} />
             </button>
