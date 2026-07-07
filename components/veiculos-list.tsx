@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { registrarLogComCliente } from "@/lib/audit-log";
+import { ordenarLotesPorNumero, selecionarProximoLoteSequencial } from "@/lib/lote-queue";
 import { venderVeiculoAction } from "@/app/actions/anuncio";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
 import type { AnuncioGrupo, IdDosGrupos, Lote, Veiculo } from "@/types/database";
@@ -20,7 +21,6 @@ const NOME_LOTE_VENDIDOS = "Vendidos";
 
 type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor" | "texto_anuncio" | "fipe" | "placa" | "tipo"> & {
   valor: string;
-  pneus: string;
   pericia_aprova: boolean;
   pericia_motivo: string;
   leilao: boolean;
@@ -41,11 +41,7 @@ const STATUS_CONFIG: Record<VehicleStatus, { label: string; badge: string; dot: 
   enviado:   { label: "Enviado",   badge: "border-purple-500 text-purple-400",  dot: "bg-purple-400",  chip: "border-app-border text-app-muted hover:border-purple-500 hover:text-purple-400",   activeChip: "border-purple-500 text-purple-400 bg-purple-500/10" },
 };
 
-function extractFromTexto(texto: string, field: "pneus" | "pericia" | "leilao") {
-  if (field === "pneus") {
-    const m = texto.match(/^PNEUS:\s*(.+)$/m);
-    return m ? m[1].trim() : "";
-  }
+function extractFromTexto(texto: string, field: "pericia" | "leilao") {
   if (field === "leilao") {
     return texto.match(/^COM LEILÃO/m) ? "sim" : "nao";
   }
@@ -57,10 +53,7 @@ function extractMotivo(texto: string): string {
   return m?.[1]?.trim() ?? "";
 }
 
-function updateTextoLine(texto: string, field: "pneus" | "pericia" | "leilao", value: string, motivo?: string): string {
-  if (field === "pneus") {
-    return texto.replace(/^(PNEUS:).*$/m, `$1 ${value || "[PNEUS]"}`);
-  }
+function updateTextoLine(texto: string, field: "pericia" | "leilao", value: string, motivo?: string): string {
   if (field === "leilao") {
     const linha = value === "sim" ? "COM LEILÃO | SEM SINISTRO ✅" : "SEM LEILÃO | SEM SINISTRO ✅";
     return texto.replace(/^(COM|SEM) LEILÃO.*$/m, linha);
@@ -105,10 +98,13 @@ export function VeiculosList() {
   const [statusFilter, setStatusFilter] = useState<VehicleStatus | null>(null);
   const [loteFilter, setLoteFilter] = useState<string | null>(null);
   const [movingVehicle, setMovingVehicle] = useState<Veiculo | null>(null);
+  const [confirmDeleteVeiculo, setConfirmDeleteVeiculo] = useState<Veiculo | null>(null);
+  const [deletingVeiculo, setDeletingVeiculo] = useState(false);
   const [creatingLote, setCreatingLote] = useState(false);
   const [newLoteName, setNewLoteName] = useState("");
   const [movingToLote, setMovingToLote] = useState(false);
   const [vehicleCountByLote, setVehicleCountByLote] = useState<Record<string, number>>({});
+  const [activeCountByLote, setActiveCountByLote] = useState<Record<string, number>>({});
   const [totalVehicles, setTotalVehicles] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -185,19 +181,33 @@ export function VeiculosList() {
       const loadedLotes = lotesResult.data ?? [];
       setLotes(loadedLotes);
 
-      const countResults = await Promise.all(
-        loadedLotes.map((lote) =>
-          supabase
-            .from("veiculos")
-            .select("id", { count: "exact", head: true })
-            .eq("lote_id", lote.id)
+      const [countResults, activeCountResults] = await Promise.all([
+        Promise.all(
+          loadedLotes.map((lote) =>
+            supabase
+              .from("veiculos")
+              .select("id", { count: "exact", head: true })
+              .eq("lote_id", lote.id)
+          )
+        ),
+        Promise.all(
+          loadedLotes.map((lote) =>
+            supabase
+              .from("veiculos")
+              .select("id", { count: "exact", head: true })
+              .eq("lote_id", lote.id)
+              .eq("status", "ativo")
+          )
         )
-      );
+      ]);
       const counts: Record<string, number> = {};
+      const activeCounts: Record<string, number> = {};
       loadedLotes.forEach((lote, index) => {
         counts[lote.id] = countResults[index].count ?? 0;
+        activeCounts[lote.id] = activeCountResults[index].count ?? 0;
       });
       setVehicleCountByLote(counts);
+      setActiveCountByLote(activeCounts);
     }
 
     setLoading(false);
@@ -247,6 +257,14 @@ export function VeiculosList() {
 
     return () => { void supabase.removeChannel(channel); };
   }, [supabase]);
+
+  // Próximo lote real da fila circular (mesmo cálculo usado pelo cron),
+  // usado só para exibição — não confundir com o campo cru "lote_da_vez".
+  const proximoLoteId = useMemo(() => {
+    const ordenados = ordenarLotesPorNumero(lotes.filter((l) => l.nome !== NOME_LOTE_VENDIDOS));
+    const ativosMap = new Map(Object.entries(activeCountByLote));
+    return selecionarProximoLoteSequencial(ordenados, ativosMap)?.id ?? null;
+  }, [lotes, activeCountByLote]);
 
   useEffect(() => {
     if (!groupVehicle) {
@@ -381,7 +399,6 @@ export function VeiculosList() {
       placa: veiculo.placa,
       tipo: veiculo.tipo,
       texto_anuncio: texto,
-      pneus: extractFromTexto(texto, "pneus"),
       pericia_aprova: extractFromTexto(texto, "pericia") === "sim",
       pericia_motivo: extractMotivo(texto),
       leilao: extractFromTexto(texto, "leilao") === "sim"
@@ -453,8 +470,11 @@ export function VeiculosList() {
   }
 
   async function deleteVeiculo(id: string) {
+    setDeletingVeiculo(true);
     const veiculo = veiculos.find((item) => item.id === id);
     const { error } = await supabase.from("veiculos").delete().eq("id", id);
+    setDeletingVeiculo(false);
+    setConfirmDeleteVeiculo(null);
     if (error) { setMessage(error.message); return; }
     await registrarLogComCliente(
       supabase,
@@ -552,9 +572,18 @@ export function VeiculosList() {
     await loadData();
   }
 
+  // O flag "lote_da_vez" no banco representa o ÚLTIMO lote disparado (a fila
+  // circular avança a partir dele) — não o próximo. Por isso, marcar "Lote X"
+  // como próximo disparo precisa gravar o flag no PREDECESSOR de X na
+  // sequência numérica, para que o cálculo de "próximo" resolva para X.
   async function selecionarLoteDaVez(loteId: string) {
+    const ordenados = ordenarLotesPorNumero(lotes.filter((l) => l.nome !== NOME_LOTE_VENDIDOS));
+    const idx = ordenados.findIndex((l) => l.id === loteId);
+    if (idx === -1) return;
+    const predecessorId = ordenados[(idx - 1 + ordenados.length) % ordenados.length].id;
+
     setLotes((curr) =>
-      curr.map((l) => ({ ...l, lote_da_vez: l.id === loteId }))
+      curr.map((l) => ({ ...l, lote_da_vez: l.id === predecessorId }))
     );
 
     const { error: clearError } = await supabase
@@ -566,7 +595,7 @@ export function VeiculosList() {
     const { error } = await supabase
       .from("lotes")
       .update({ lote_da_vez: true })
-      .eq("id", loteId);
+      .eq("id", predecessorId);
     if (error) { setMessage(error.message); await loadData(); return; }
 
     const lote = lotes.find((item) => item.id === loteId);
@@ -575,7 +604,7 @@ export function VeiculosList() {
       `Usuario marcou o lote [${lote?.nome ?? loteId}] como proximo disparo`,
       "lote",
       loteId,
-      { lote_da_vez: true }
+      { lote_da_vez_predecessor: predecessorId }
     );
   }
 
@@ -863,7 +892,7 @@ export function VeiculosList() {
             const isActive = loteFilter === lote.id;
             const isVendidos = lote.nome === NOME_LOTE_VENDIDOS;
             const isFull = !isVendidos && count >= LOTE_CAPACITY;
-            const isDaVez = lote.lote_da_vez === true;
+            const isDaVez = lote.id === proximoLoteId;
             return (
               <div key={lote.id} className="flex items-center gap-0.5">
                 <button
@@ -1006,7 +1035,7 @@ export function VeiculosList() {
                 onToggleSelect={() => toggleSelection(veiculo.id)}
                 onToggleMenu={() => setOpenMenu(openMenu === veiculo.id ? null : veiculo.id)}
                 onEdit={() => beginEdit(veiculo)}
-                onDelete={() => deleteVeiculo(veiculo.id)}
+                onDelete={() => { setConfirmDeleteVeiculo(veiculo); setOpenMenu(null); }}
                 onGroups={() => { setGroupVehicle(veiculo); setOpenMenu(null); }}
                 onProgram={() => { void programVehicle(veiculo); }}
                 onStatusChange={(status) => void updateVehicleStatus(veiculo.id, status)}
@@ -1046,22 +1075,6 @@ export function VeiculosList() {
                   <option value="aleatorio">ALEATÓRIO</option>
                   <option value="prioridade">PRIORIDADE</option>
                 </select>
-              </label>
-              <label className="space-y-2">
-                <span className="app-label">Pneus</span>
-                <input
-                  className="app-input"
-                  value={editForm.pneus}
-                  placeholder="Ex: BONS"
-                  onChange={(e) => {
-                    const pneus = e.target.value;
-                    setEditForm({
-                      ...editForm,
-                      pneus,
-                      texto_anuncio: updateTextoLine(editForm.texto_anuncio, "pneus", pneus)
-                    });
-                  }}
-                />
               </label>
             </div>
             <div className="space-y-2">
@@ -1207,6 +1220,32 @@ export function VeiculosList() {
           ) : (
             <p className="text-sm text-app-muted">Cadastre um grupo antes de vincular anuncios.</p>
           )}
+        </Modal>
+      ) : null}
+
+      {confirmDeleteVeiculo ? (
+        <Modal title="Excluir veículo" onClose={() => setConfirmDeleteVeiculo(null)}>
+          <p className="text-sm leading-6 text-app-muted">
+            Tem certeza que deseja excluir o veículo{" "}
+            <span className="font-semibold text-app-white">{confirmDeleteVeiculo.nome_anuncio}</span>
+            {" "}(placa {confirmDeleteVeiculo.placa})? Essa ação não pode ser desfeita.
+          </p>
+          <div className="mt-5 flex gap-3">
+            <button
+              className="flex flex-1 items-center justify-center gap-2 rounded-md border border-red-500/40 bg-red-500/10 py-2 text-sm font-semibold text-red-400 hover:bg-red-500/20 disabled:opacity-50 transition"
+              disabled={deletingVeiculo}
+              onClick={() => void deleteVeiculo(confirmDeleteVeiculo.id)}
+            >
+              {deletingVeiculo ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+              Excluir
+            </button>
+            <button
+              className="flex-1 rounded-md border border-app-border bg-app-card py-2 text-sm font-semibold text-app-white hover:border-app-green transition"
+              onClick={() => setConfirmDeleteVeiculo(null)}
+            >
+              Cancelar
+            </button>
+          </div>
         </Modal>
       ) : null}
 

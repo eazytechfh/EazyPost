@@ -26,7 +26,6 @@ type FormState = {
   tipo: string;
   cambio: string;
   local: string;
-  pneus: string;
   pericia_aprova: boolean;
   pericia_motivo: string;
   leilao: boolean;
@@ -45,7 +44,6 @@ function buildAnuncioTemplate(fields: {
   placa: string;
   cambio: string;
   local: string;
-  pneus: string;
   pericia_aprova: boolean;
   pericia_motivo: string;
   leilao: boolean;
@@ -61,7 +59,6 @@ function buildAnuncioTemplate(fields: {
   const placa = fields.placa ? fields.placa.toUpperCase() : "[PLACA]";
   const cambio = fields.cambio || "[CÂMBIO]";
   const local = fields.local || "[LOCAL]";
-  const pneus = fields.pneus || "[PNEUS]";
   const pericia = fields.pericia_aprova
     ? "APROVA ✅"
     : `NÃO APROVA ❌${fields.pericia_motivo ? ` - ${fields.pericia_motivo}` : ""}`;
@@ -74,7 +71,6 @@ function buildAnuncioTemplate(fields: {
 
 ANO: ${ano} | KM: ${km}
 CÂMBIO: ${cambio}
-PNEUS: ${pneus}
 PERÍCIA: ${pericia}
 PLACA: ${placa}
 
@@ -100,14 +96,13 @@ const initialState: FormState = {
   tipo: "aleatorio",
   cambio: "",
   local: "",
-  pneus: "",
   pericia_aprova: true,
   pericia_motivo: "",
   leilao: false,
   texto_anuncio: buildAnuncioTemplate({
     nome_anuncio: "", fipe: "", valor: "", ano: "",
     quilometragem: "", placa: "", cambio: "", local: "",
-    pneus: "", pericia_aprova: true, pericia_motivo: "", leilao: false
+    pericia_aprova: true, pericia_motivo: "", leilao: false
   })
 };
 
@@ -146,14 +141,13 @@ export function AnuncioForm() {
         placa: `${current.placaLetra}XX-${current.placa}`,
         cambio: current.cambio,
         local: current.local,
-        pneus: current.pneus,
         pericia_aprova: current.pericia_aprova,
         pericia_motivo: current.pericia_motivo,
         leilao: current.leilao
       })
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.placaLetra, form.cambio, form.local, form.pneus, form.pericia_aprova, form.pericia_motivo, form.leilao]);
+  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.placaLetra, form.cambio, form.local, form.pericia_aprova, form.pericia_motivo, form.leilao]);
 
   function updateField<K extends keyof FormState>(field: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -388,17 +382,6 @@ export function AnuncioForm() {
               className="app-input"
               value={form.cambio}
               onChange={(event) => updateField("cambio", event.target.value)}
-              required
-            />
-          </label>
-
-          <label className="space-y-2">
-            <span className="app-label">Pneus</span>
-            <input
-              className="app-input"
-              value={form.pneus}
-              onChange={(event) => updateField("pneus", event.target.value)}
-              placeholder="Ex: BONS"
               required
             />
           </label>

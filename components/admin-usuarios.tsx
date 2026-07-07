@@ -1,15 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Layers, Loader2, Shield, ShieldOff, Trash2, UserPlus, X } from "lucide-react";
+import { Check, Clock, Layers, Loader2, Shield, ShieldOff, Trash2, UserPlus, X } from "lucide-react";
 import {
   createUserAction,
   deleteUserAction,
+  getHorasPermitidasAction,
   listUsersAction,
-  toggleAdminAction
+  toggleAdminAction,
+  updateHorasPermitidasAction
 } from "@/app/actions/admin";
 import { rebalancearLotesAction } from "@/app/actions/lotes";
 import { SectionHeader } from "./section-header";
+
+const TODAS_AS_HORAS = Array.from({ length: 24 }, (_, h) => h);
 
 type UserRow = {
   id: string;
@@ -37,6 +41,43 @@ export function AdminUsuarios() {
     error?: string;
   } | null>(null);
   const [confirmRebalance, setConfirmRebalance] = useState(false);
+
+  const [horasPermitidas, setHorasPermitidas] = useState<number[]>([]);
+  const [horasLoading, setHorasLoading] = useState(true);
+  const [horasSaving, setHorasSaving] = useState(false);
+  const [horasMessage, setHorasMessage] = useState("");
+
+  const loadHoras = useCallback(async () => {
+    setHorasLoading(true);
+    const result = await getHorasPermitidasAction();
+    if (result.error) {
+      setHorasMessage(result.error);
+    } else {
+      setHorasPermitidas(result.data ?? []);
+    }
+    setHorasLoading(false);
+  }, []);
+
+  useEffect(() => { void loadHoras(); }, [loadHoras]);
+
+  function toggleHora(hora: number) {
+    setHorasPermitidas((prev) =>
+      prev.includes(hora) ? prev.filter((h) => h !== hora) : [...prev, hora].sort((a, b) => a - b)
+    );
+  }
+
+  async function handleSalvarHoras() {
+    setHorasSaving(true);
+    setHorasMessage("");
+    const result = await updateHorasPermitidasAction(horasPermitidas);
+    setHorasSaving(false);
+    if (result.error) {
+      setHorasMessage(result.error);
+    } else {
+      setHorasMessage("Horários permitidos atualizados com sucesso.");
+      await loadHoras();
+    }
+  }
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -229,6 +270,59 @@ export function AdminUsuarios() {
           </div>
         </div>
       )}
+
+      {/* Horários permitidos de disparo automático */}
+      <div className="mt-10">
+        <h3 className="mb-1 text-sm font-semibold text-app-white">Horários de Disparo Automático</h3>
+        <p className="mb-4 text-xs text-app-muted">
+          O sistema só dispara lotes automaticamente nos horários selecionados abaixo (horário de Brasília).
+          Os lotes seguem em sequência entre os dias, sem reiniciar — a fila só reinicia quando todos os lotes
+          já tiverem sido disparados.
+        </p>
+
+        {horasMessage ? (
+          <p className={`mb-3 rounded-md border p-3 text-sm ${horasMessage.includes("sucesso") ? "border-app-green/40 bg-app-green/10 text-app-green" : "border-red-500/40 bg-red-500/10 text-red-400"}`}>
+            {horasMessage}
+          </p>
+        ) : null}
+
+        {horasLoading ? (
+          <div className="app-card p-6 text-sm text-app-muted flex items-center gap-2">
+            <Loader2 size={16} className="animate-spin" />
+            Carregando horários...
+          </div>
+        ) : (
+          <div className="app-card p-4">
+            <div className="mb-4 grid grid-cols-6 gap-2 sm:grid-cols-8 md:grid-cols-12">
+              {TODAS_AS_HORAS.map((hora) => {
+                const ativo = horasPermitidas.includes(hora);
+                return (
+                  <button
+                    key={hora}
+                    type="button"
+                    onClick={() => toggleHora(hora)}
+                    className={`rounded-md border px-2 py-2 text-xs font-semibold transition ${
+                      ativo
+                        ? "border-app-green bg-app-green/10 text-app-green"
+                        : "border-app-border text-app-muted hover:border-app-green/50"
+                    }`}
+                  >
+                    {String(hora).padStart(2, "0")}h
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => void handleSalvarHoras()}
+              disabled={horasSaving}
+              className="app-button"
+            >
+              {horasSaving ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />}
+              Salvar Horários
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Manutenção de Lotes */}
       <div className="mt-10">

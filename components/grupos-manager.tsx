@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Search, Trash2 } from "lucide-react";
+import { Check, Loader2, Search, Trash2, X } from "lucide-react";
 import { registrarLogComCliente } from "@/lib/audit-log";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import type { IdDosGrupos } from "@/types/database";
@@ -24,6 +24,8 @@ export function GruposManager() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshCountdown, setRefreshCountdown] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const loadSavedGroupIds = useCallback(async () => {
     setLoading(true);
@@ -213,8 +215,11 @@ export function GruposManager() {
   }
 
   async function deleteSavedGroupId(id: string) {
+    setDeletingId(id);
     const grupo = savedGroupIds.find((item) => item.id === id);
     const { error } = await supabase.from("id_dos_grupos").delete().eq("id", id);
+    setDeletingId(null);
+    setConfirmDeleteId(null);
 
     if (error) {
       setMessage(error.message);
@@ -333,14 +338,37 @@ export function GruposManager() {
                     <span className="block text-xs font-bold uppercase text-app-muted lg:hidden">Data de Cadastro</span>
                     <span className="text-app-muted">{formatDateTime(group.created_at)}</span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => deleteSavedGroupId(group.id)}
-                    className="w-fit rounded-md border border-app-border bg-app-card p-2.5 text-app-white transition hover:border-red-500 hover:text-red-400 lg:justify-self-end"
-                    aria-label={`Excluir ${group.nome_do_grupo}`}
-                  >
-                    <Trash2 size={18} />
-                  </button>
+                  {confirmDeleteId === group.id ? (
+                    <div className="flex items-center gap-2 lg:justify-self-end">
+                      <span className="text-xs text-app-muted">Confirmar?</span>
+                      <button
+                        type="button"
+                        onClick={() => void deleteSavedGroupId(group.id)}
+                        disabled={deletingId === group.id}
+                        className="rounded-md border border-red-500/40 bg-red-500/10 p-1.5 text-red-400 hover:bg-red-500/20"
+                        aria-label={`Confirmar exclusão de ${group.nome_do_grupo}`}
+                      >
+                        {deletingId === group.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="rounded-md border border-app-border p-1.5 text-app-muted hover:border-app-green hover:text-app-white"
+                        aria-label="Cancelar"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(group.id)}
+                      className="w-fit rounded-md border border-app-border bg-app-card p-2.5 text-app-white transition hover:border-red-500 hover:text-red-400 lg:justify-self-end"
+                      aria-label={`Excluir ${group.nome_do_grupo}`}
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  )}
                 </article>
               );
             })}
