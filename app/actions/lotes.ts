@@ -99,31 +99,44 @@ export async function getProgramacaoAction(): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// Sincroniza o flag lote_da_vez no banco para o próximo lote elegível na
-// sequência circular (1, 2, 3, ..., N, 1, 2, ...). Chamado ao montar a
+// Garante que exista um ponteiro lote_da_vez válido. Chamado ao montar a
 // página Programação.
+//
+// IMPORTANTE: o flag lote_da_vez representa o ÚLTIMO lote disparado (a fila
+// avança a partir dele) — não o próximo. Por isso esta função NUNCA deve
+// mexer num flag que já existe: se já há um lote marcado, ele reflete o
+// estado real da fila e recalculá-lo aqui avançaria a fila sozinho, só por
+// a página ter sido carregada (era exatamente esse o bug: cada vez que a
+// Programação era aberta, o "próximo" pulava um lote adiante).
+// Só inicializa quando NENHUM lote está marcado (primeira vez, ou depois de
+// renumerar/recriar os lotes) — nesse caso marca o predecessor do primeiro
+// lote elegível, para que o próximo a disparar seja o primeiro da sequência.
 // ---------------------------------------------------------------------------
 export async function sincronizarFilaAction(): Promise<{ error?: string }> {
   const supabase = createSupabaseServerClient();
 
   const { data: programacao, error } = await getProgramacaoAction();
   if (error) return { error };
+  if (!programacao.length) return {};
 
-  const ativosPorId = new Map(programacao.map((l) => [l.id, l.veiculos_ativos]));
-  const proximo = selecionarProximoLoteSequencial(programacao, ativosPorId);
+  const jaTemPonteiro = programacao.some((l) => l.lote_da_vez);
+  if (jaTemPonteiro) return {};
 
-  // Limpa todos os flags
+  const primeiroElegivel = programacao.find((l) => l.veiculos_ativos > 0);
+  if (!primeiroElegivel) return {};
+
+  const idx = programacao.findIndex((l) => l.id === primeiroElegivel.id);
+  const predecessor = programacao[(idx - 1 + programacao.length) % programacao.length];
+
   await supabase
     .from("lotes")
     .update({ lote_da_vez: false })
     .neq("id", "00000000-0000-0000-0000-000000000000");
 
-  if (proximo) {
-    await supabase
-      .from("lotes")
-      .update({ lote_da_vez: true })
-      .eq("id", proximo.id);
-  }
+  await supabase
+    .from("lotes")
+    .update({ lote_da_vez: true })
+    .eq("id", predecessor.id);
 
   return {};
 }
