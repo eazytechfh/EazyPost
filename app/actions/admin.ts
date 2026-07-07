@@ -161,3 +161,61 @@ export async function toggleAdminAction(
   );
   return { data: true };
 }
+
+// --------------------------------------------------------------------------
+// Horários permitidos de disparo automático (dispatch_config.horas_permitidas)
+// --------------------------------------------------------------------------
+export async function getHorasPermitidasAction(): Promise<ActionResult<number[]>> {
+  try {
+    await requireAdmin();
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("dispatch_config")
+    .select("horas_permitidas")
+    .eq("id", 1)
+    .maybeSingle();
+
+  if (error) return { error: error.message };
+  return { data: (data as { horas_permitidas: number[] } | null)?.horas_permitidas ?? [] };
+}
+
+export async function updateHorasPermitidasAction(
+  horas: number[]
+): Promise<ActionResult<boolean>> {
+  try {
+    await requireAdmin();
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
+  const horasValidas = horas
+    .filter((h) => Number.isInteger(h) && h >= 0 && h <= 23)
+    .filter((h, idx, arr) => arr.indexOf(h) === idx)
+    .sort((a, b) => a - b);
+
+  if (horasValidas.length === 0) {
+    return { error: "Selecione ao menos um horário permitido." };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("dispatch_config")
+    .update({ horas_permitidas: horasValidas })
+    .eq("id", 1);
+
+  if (error) return { error: error.message };
+
+  await registrarLogComCliente(
+    createSupabaseServerClient(),
+    `Usuario atualizou os horarios permitidos de disparo: [${horasValidas.join(", ")}]`,
+    "configuracao",
+    "",
+    { horas_permitidas: horasValidas }
+  );
+
+  return { data: true };
+}

@@ -72,14 +72,30 @@ export async function GET(request: NextRequest) {
   // Service role: ignora RLS, não precisa de sessão/login
   const supabase = createSupabaseServiceClient();
 
-  // 1. Lê o próximo disparo agendado
+  // 1. Lê o próximo disparo agendado e os horários permitidos (configurável em /dashboard/admin)
   const { data: configRaw, error: configError } = await supabase
     .from("dispatch_config")
-    .select("next_dispatch_at")
+    .select("next_dispatch_at, horas_permitidas")
     .eq("id", 1)
     .maybeSingle();
 
   console.log("[dispatch] configRaw:", configRaw, "error:", configError);
+
+  const horasPermitidas = (configRaw as { horas_permitidas: number[] } | null)?.horas_permitidas
+    ?? [9, 10, 13, 14, 15, 16, 17];
+
+  const horaAtual = parseInt(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Sao_Paulo",
+      hour: "numeric",
+      hourCycle: "h23"
+    }).format(new Date()),
+    10
+  );
+
+  if (!horasPermitidas.includes(horaAtual)) {
+    return NextResponse.json({ ok: false, reason: "outside_allowed_hours", hora_atual: horaAtual, horas_permitidas: horasPermitidas });
+  }
 
   const currentIso = (configRaw as { next_dispatch_at: string } | null)?.next_dispatch_at ?? null;
   const nextAt = currentIso ? new Date(currentIso).getTime() : 0;

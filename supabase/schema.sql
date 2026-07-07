@@ -48,6 +48,11 @@ create table if not exists public.dispatch_config (
   next_dispatch_at timestamp with time zone not null default (now() + interval '1 hour')
 );
 
+-- Horários (0-23, horário de Brasília) em que o sistema tem permissão de disparar.
+-- Configurável pelo admin em /dashboard/admin.
+alter table public.dispatch_config
+  add column if not exists horas_permitidas integer[] not null default '{9,10,13,14,15,16,17}';
+
 -- Garante que a linha inicial existe
 insert into public.dispatch_config (id, next_dispatch_at)
 values (1, now() + interval '1 hour')
