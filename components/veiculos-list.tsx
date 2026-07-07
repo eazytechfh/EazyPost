@@ -8,14 +8,13 @@ import {
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { registrarLogComCliente } from "@/lib/audit-log";
-import { ordenarLotesPorNumero, selecionarProximoLoteSequencial } from "@/lib/lote-queue";
+import { LOTE_CAPACITY, ordenarLotesPorNumero, selecionarProximoLoteSequencial } from "@/lib/lote-queue";
 import { venderVeiculoAction } from "@/app/actions/anuncio";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
 import type { AnuncioGrupo, IdDosGrupos, Lote, Veiculo } from "@/types/database";
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
 
-const LOTE_CAPACITY = 10;
 const PAGE_SIZE = 12;
 const NOME_LOTE_VENDIDOS = "Vendidos";
 

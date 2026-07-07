@@ -4,10 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarClock, RotateCcw, Loader2, RefreshCw, Zap } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { getProgramacaoAction, renumerarLotesAction, sincronizarFilaAction, type LoteProgramacao } from "@/app/actions/lotes";
-import { selecionarProximoLoteSequencial } from "@/lib/lote-queue";
+import { LOTE_CAPACITY, selecionarProximoLoteSequencial } from "@/lib/lote-queue";
 import { SectionHeader } from "./section-header";
-
-const LOTE_CAPACITY = 10;
 
 // ---------------------------------------------------------------------------
 // Badge "DA VEZ"
