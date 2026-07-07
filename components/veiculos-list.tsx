@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { registrarLogComCliente } from "@/lib/audit-log";
+import { ordenarLotesPorNumero, selecionarProximoLoteSequencial } from "@/lib/lote-queue";
 import { venderVeiculoAction } from "@/app/actions/anuncio";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
 import type { AnuncioGrupo, IdDosGrupos, Lote, Veiculo } from "@/types/database";
@@ -103,6 +104,7 @@ export function VeiculosList() {
   const [newLoteName, setNewLoteName] = useState("");
   const [movingToLote, setMovingToLote] = useState(false);
   const [vehicleCountByLote, setVehicleCountByLote] = useState<Record<string, number>>({});
+  const [activeCountByLote, setActiveCountByLote] = useState<Record<string, number>>({});
   const [totalVehicles, setTotalVehicles] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -179,19 +181,33 @@ export function VeiculosList() {
       const loadedLotes = lotesResult.data ?? [];
       setLotes(loadedLotes);
 
-      const countResults = await Promise.all(
-        loadedLotes.map((lote) =>
-          supabase
-            .from("veiculos")
-            .select("id", { count: "exact", head: true })
-            .eq("lote_id", lote.id)
+      const [countResults, activeCountResults] = await Promise.all([
+        Promise.all(
+          loadedLotes.map((lote) =>
+            supabase
+              .from("veiculos")
+              .select("id", { count: "exact", head: true })
+              .eq("lote_id", lote.id)
+          )
+        ),
+        Promise.all(
+          loadedLotes.map((lote) =>
+            supabase
+              .from("veiculos")
+              .select("id", { count: "exact", head: true })
+              .eq("lote_id", lote.id)
+              .eq("status", "ativo")
+          )
         )
-      );
+      ]);
       const counts: Record<string, number> = {};
+      const activeCounts: Record<string, number> = {};
       loadedLotes.forEach((lote, index) => {
         counts[lote.id] = countResults[index].count ?? 0;
+        activeCounts[lote.id] = activeCountResults[index].count ?? 0;
       });
       setVehicleCountByLote(counts);
+      setActiveCountByLote(activeCounts);
     }
 
     setLoading(false);
@@ -241,6 +257,14 @@ export function VeiculosList() {
 
     return () => { void supabase.removeChannel(channel); };
   }, [supabase]);
+
+  // Próximo lote real da fila circular (mesmo cálculo usado pelo cron),
+  // usado só para exibição — não confundir com o campo cru "lote_da_vez".
+  const proximoLoteId = useMemo(() => {
+    const ordenados = ordenarLotesPorNumero(lotes.filter((l) => l.nome !== NOME_LOTE_VENDIDOS));
+    const ativosMap = new Map(Object.entries(activeCountByLote));
+    return selecionarProximoLoteSequencial(ordenados, ativosMap)?.id ?? null;
+  }, [lotes, activeCountByLote]);
 
   useEffect(() => {
     if (!groupVehicle) {
@@ -548,9 +572,18 @@ export function VeiculosList() {
     await loadData();
   }
 
+  // O flag "lote_da_vez" no banco representa o ÚLTIMO lote disparado (a fila
+  // circular avança a partir dele) — não o próximo. Por isso, marcar "Lote X"
+  // como próximo disparo precisa gravar o flag no PREDECESSOR de X na
+  // sequência numérica, para que o cálculo de "próximo" resolva para X.
   async function selecionarLoteDaVez(loteId: string) {
+    const ordenados = ordenarLotesPorNumero(lotes.filter((l) => l.nome !== NOME_LOTE_VENDIDOS));
+    const idx = ordenados.findIndex((l) => l.id === loteId);
+    if (idx === -1) return;
+    const predecessorId = ordenados[(idx - 1 + ordenados.length) % ordenados.length].id;
+
     setLotes((curr) =>
-      curr.map((l) => ({ ...l, lote_da_vez: l.id === loteId }))
+      curr.map((l) => ({ ...l, lote_da_vez: l.id === predecessorId }))
     );
 
     const { error: clearError } = await supabase
@@ -562,7 +595,7 @@ export function VeiculosList() {
     const { error } = await supabase
       .from("lotes")
       .update({ lote_da_vez: true })
-      .eq("id", loteId);
+      .eq("id", predecessorId);
     if (error) { setMessage(error.message); await loadData(); return; }
 
     const lote = lotes.find((item) => item.id === loteId);
@@ -571,7 +604,7 @@ export function VeiculosList() {
       `Usuario marcou o lote [${lote?.nome ?? loteId}] como proximo disparo`,
       "lote",
       loteId,
-      { lote_da_vez: true }
+      { lote_da_vez_predecessor: predecessorId }
     );
   }
 
@@ -859,7 +892,7 @@ export function VeiculosList() {
             const isActive = loteFilter === lote.id;
             const isVendidos = lote.nome === NOME_LOTE_VENDIDOS;
             const isFull = !isVendidos && count >= LOTE_CAPACITY;
-            const isDaVez = lote.lote_da_vez === true;
+            const isDaVez = lote.id === proximoLoteId;
             return (
               <div key={lote.id} className="flex items-center gap-0.5">
                 <button
