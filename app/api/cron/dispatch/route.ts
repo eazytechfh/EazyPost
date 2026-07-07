@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase-server";
 import {
   NOME_LOTE_VENDIDOS,
+  calcularVerificacaoDiaria,
   ordenarLotesPorNumero,
   selecionarProximoLoteSequencial
 } from "@/lib/lote-queue";
@@ -13,6 +14,9 @@ export const revalidate = 0;
 const WEBHOOK_URL = "https://n8n.eazy.tec.br/webhook/4b4ea55a-7916-4592-b44c-875fc13d7064";
 const TOTAL_SECONDS = 60 * 60;
 const RETRY_DELAYS = [0, 3000, 7000, 15000];
+
+// Horário de checkpoint diário (Brasília) — decide reseta/complementa/prossegue.
+const HORA_VERIFICACAO_DIARIA = 19;
 
 // ---------------------------------------------------------------------------
 // Dispara webhook com retry — body sempre inclui lote_id e lote_nome
@@ -75,7 +79,7 @@ export async function GET(request: NextRequest) {
   // 1. Lê o próximo disparo agendado e os horários permitidos (configurável em /dashboard/admin)
   const { data: configRaw, error: configError } = await supabase
     .from("dispatch_config")
-    .select("next_dispatch_at, horas_permitidas")
+    .select("next_dispatch_at, horas_permitidas, ultima_verificacao_data")
     .eq("id", 1)
     .maybeSingle();
 
@@ -83,15 +87,102 @@ export async function GET(request: NextRequest) {
 
   const horasPermitidas = (configRaw as { horas_permitidas: number[] } | null)?.horas_permitidas
     ?? [9, 10, 13, 14, 15, 16, 17];
+  const ultimaVerificacaoData = (configRaw as { ultima_verificacao_data: string | null } | null)
+    ?.ultima_verificacao_data ?? null;
 
+  const agoraSaoPaulo = new Date();
   const horaAtual = parseInt(
     new Intl.DateTimeFormat("en-US", {
       timeZone: "America/Sao_Paulo",
       hour: "numeric",
       hourCycle: "h23"
-    }).format(new Date()),
+    }).format(agoraSaoPaulo),
     10
   );
+  // yyyy-mm-dd no fuso de Brasília, pra comparar com ultima_verificacao_data (date)
+  const dataAtual = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo"
+  }).format(agoraSaoPaulo);
+
+  // 1.1 Checkpoint diário das 19h — reseta, complementa ou apenas prossegue.
+  // Roda só uma vez por dia (controlado por ultima_verificacao_data).
+  if (horaAtual === HORA_VERIFICACAO_DIARIA) {
+    if (ultimaVerificacaoData === dataAtual) {
+      return NextResponse.json({ ok: false, reason: "verificacao_ja_executada_hoje" });
+    }
+
+    const [lotesResult, veiculosResult] = await Promise.all([
+      supabase.from("lotes").select("id, nome, lote_da_vez, created_at").neq("nome", NOME_LOTE_VENDIDOS),
+      supabase.from("veiculos").select("lote_id, status").not("lote_id", "is", null).in("status", ["ativo", "enviado"])
+    ]);
+
+    const lotes = (lotesResult.data ?? []) as { id: string; nome: string; lote_da_vez: boolean; created_at: string }[];
+    const sorted = ordenarLotesPorNumero(lotes);
+
+    const ativosMap = new Map<string, number>();
+    const enviadosMap = new Map<string, number>();
+    (veiculosResult.data ?? []).forEach((v) => {
+      const { lote_id, status } = v as { lote_id: string; status: string };
+      const mapa = status === "ativo" ? ativosMap : status === "enviado" ? enviadosMap : null;
+      if (mapa) mapa.set(lote_id, (mapa.get(lote_id) ?? 0) + 1);
+    });
+
+    const resultado = calcularVerificacaoDiaria(sorted, ativosMap, enviadosMap, horasPermitidas.length);
+
+    await supabase.from("dispatch_config").update({ ultima_verificacao_data: dataAtual }).eq("id", 1);
+
+    if (resultado.tipo === "reseta") {
+      const { data: resetados } = await supabase
+        .from("veiculos")
+        .update({ status: "ativo", updated_at: new Date().toISOString() })
+        .eq("status", "enviado")
+        .select("id");
+      const count = resetados?.length ?? 0;
+
+      await supabase.from("logs_auditoria").insert({
+        user_email: "sistema",
+        user_id: null,
+        acao: `Verificação diária (19h): sem lotes ativos — ciclo resetado, ${count ?? 0} veículo${count !== 1 ? "s" : ""} voltaram para "ativo"`,
+        entidade: "disparo_automatico",
+        entidade_id: null,
+        detalhes: { acao: "verificacao_reseta", veiculos_resetados: count ?? 0, executado_em: new Date().toISOString() }
+      });
+
+      return NextResponse.json({ ok: true, verificacao: "reseta", veiculos_resetados: count ?? 0 });
+    }
+
+    if (resultado.tipo === "complementa") {
+      await supabase
+        .from("veiculos")
+        .update({ status: "ativo", updated_at: new Date().toISOString() })
+        .in("lote_id", resultado.loteIds)
+        .eq("status", "enviado");
+
+      await supabase.from("logs_auditoria").insert({
+        user_email: "sistema",
+        user_id: null,
+        acao: `Verificação diária (19h): fila incompleta — complementados ${resultado.loteIds.length} lote${resultado.loteIds.length !== 1 ? "s" : ""} para cobrir os horários do dia`,
+        entidade: "disparo_automatico",
+        entidade_id: null,
+        detalhes: { acao: "verificacao_complementa", lotes_complementados: resultado.loteIds, executado_em: new Date().toISOString() }
+      });
+
+      return NextResponse.json({ ok: true, verificacao: "complementa", lotes_complementados: resultado.loteIds });
+    }
+
+    if (resultado.tipo === "prossegue") {
+      await supabase.from("logs_auditoria").insert({
+        user_email: "sistema",
+        user_id: null,
+        acao: "Verificação diária (19h): fila já tem lotes ativos suficientes para os horários do dia — nada a fazer",
+        entidade: "disparo_automatico",
+        entidade_id: null,
+        detalhes: { acao: "verificacao_prossegue", executado_em: new Date().toISOString() }
+      });
+    }
+
+    return NextResponse.json({ ok: true, verificacao: resultado.tipo });
+  }
 
   if (!horasPermitidas.includes(horaAtual)) {
     return NextResponse.json({ ok: false, reason: "outside_allowed_hours", hora_atual: horaAtual, horas_permitidas: horasPermitidas });
@@ -157,37 +248,17 @@ export async function GET(request: NextRequest) {
 
   const proximo = selecionarProximoLoteSequencial(sorted, ativosMap);
 
-  // 5. Sem lotes ativos — verifica reset de ciclo
+  // 5. Sem lotes ativos no momento — o reset/complemento do ciclo é feito
+  // exclusivamente pela verificação diária das 19h (HORA_VERIFICACAO_DIARIA).
   if (!proximo) {
-    const { count: enviadosCount } = await supabase
-      .from("veiculos")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "enviado");
-
-    if (enviadosCount && enviadosCount > 0) {
-      await supabase
-        .from("veiculos")
-        .update({ status: "ativo", updated_at: new Date().toISOString() })
-        .eq("status", "enviado");
-
-      await supabase.from("logs_auditoria").insert({
-        user_email: "sistema",
-        user_id: null,
-        acao: `Sistema resetou o ciclo — ${enviadosCount} veículo${enviadosCount !== 1 ? "s" : ""} voltaram de "enviado" para "ativo"`,
-        entidade: "disparo_automatico",
-        entidade_id: null,
-        detalhes: { acao: "ciclo_resetado", veiculos_resetados: enviadosCount, executado_em: new Date().toISOString() }
-      });
-    } else {
-      await supabase.from("logs_auditoria").insert({
-        user_email: "sistema",
-        user_id: null,
-        acao: "Sistema verificou a fila mas não há veículos para disparar",
-        entidade: "disparo_automatico",
-        entidade_id: null,
-        detalhes: { acao: "sem_veiculos", executado_em: new Date().toISOString() }
-      });
-    }
+    await supabase.from("logs_auditoria").insert({
+      user_email: "sistema",
+      user_id: null,
+      acao: "Sistema verificou a fila mas não há lotes ativos para disparar agora",
+      entidade: "disparo_automatico",
+      entidade_id: null,
+      detalhes: { acao: "sem_lotes_ativos", executado_em: new Date().toISOString() }
+    });
 
     return NextResponse.json({ ok: true, lote: null, webhook_fired: false, next_dispatch_at: newNextIso });
   }

@@ -53,6 +53,64 @@ export function selecionarProximoLoteSequencial<
   return null;
 }
 
+// Verificação diária (rodada uma vez, no horário de checkpoint — ex: 19h):
+// decide se o ciclo deve ser resetado, complementado ou apenas seguir em frente.
+//
+// - reseta: não sobrou nenhum lote com veículo ativo -> todo o ciclo volta
+//   ("enviado" -> "ativo") para recomeçar do zero.
+// - complementa: sobraram lotes ativos, mas em quantidade menor que o total
+//   de horários de disparo do dia -> completa a fila trazendo de volta
+//   ("enviado" -> "ativo") os próximos lotes esgotados na ordem sequencial
+//   circular, a partir do lote atual, até fechar a quantidade de horários.
+// - prossegue: já existem lotes ativos suficientes para preencher todos os
+//   horários do dia -> nada muda.
+export type VerificacaoDiariaResultado =
+  | { tipo: "reseta" }
+  | { tipo: "complementa"; loteIds: string[] }
+  | { tipo: "prossegue" }
+  | { tipo: "nada" };
+
+export function calcularVerificacaoDiaria<
+  T extends { id: string; nome: string; lote_da_vez?: boolean }
+>(
+  lotesOrdenados: T[],
+  ativosPorId: Map<string, number>,
+  enviadosPorId: Map<string, number>,
+  totalHorariosPermitidos: number
+): VerificacaoDiariaResultado {
+  const temAtivos = (l: T) => (ativosPorId.get(l.id) ?? 0) > 0;
+  const temEnviados = (l: T) => (enviadosPorId.get(l.id) ?? 0) > 0;
+
+  const lotesAtivos = lotesOrdenados.filter(temAtivos);
+  const totalEnviados = lotesOrdenados.reduce((acc, l) => acc + (enviadosPorId.get(l.id) ?? 0), 0);
+
+  // Nenhum lote ativo: reseta o ciclo inteiro, se houver algo para resetar.
+  if (lotesAtivos.length === 0) {
+    return totalEnviados > 0 ? { tipo: "reseta" } : { tipo: "nada" };
+  }
+
+  // Já há lotes ativos suficientes para cobrir todos os horários do dia.
+  if (lotesAtivos.length >= totalHorariosPermitidos) {
+    return { tipo: "prossegue" };
+  }
+
+  // Faltam lotes: complementa trazendo de volta os próximos esgotados,
+  // em ordem circular a partir do lote atual ("lote_da_vez"), sem repetir.
+  const faltam = totalHorariosPermitidos - lotesAtivos.length;
+  const idxAtual = lotesOrdenados.findIndex((l) => l.lote_da_vez);
+  const inicio = idxAtual === -1 ? 0 : idxAtual + 1;
+
+  const loteIds: string[] = [];
+  for (let step = 0; step < lotesOrdenados.length && loteIds.length < faltam; step++) {
+    const candidato = lotesOrdenados[(inicio + step) % lotesOrdenados.length];
+    if (!temAtivos(candidato) && temEnviados(candidato)) {
+      loteIds.push(candidato.id);
+    }
+  }
+
+  return loteIds.length > 0 ? { tipo: "complementa", loteIds } : { tipo: "prossegue" };
+}
+
 // Calcula o próximo número de lote a criar, com base no maior número já
 // existente entre os lotes reais (nunca conta o lote pseudo "Vendidos" e
 // nunca soma contagens — evita os saltos causados por COUNT(*) inconsistente).

@@ -53,6 +53,11 @@ create table if not exists public.dispatch_config (
 alter table public.dispatch_config
   add column if not exists horas_permitidas integer[] not null default '{9,10,13,14,15,16,17}';
 
+-- Guarda a última data (horário de Brasília) em que a verificação diária das
+-- 19h (reseta/complementa/prossegue) já rodou, para não repetir no mesmo dia.
+alter table public.dispatch_config
+  add column if not exists ultima_verificacao_data date;
+
 -- Garante que a linha inicial existe
 insert into public.dispatch_config (id, next_dispatch_at)
 values (1, now() + interval '1 hour')
