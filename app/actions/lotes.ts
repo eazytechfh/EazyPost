@@ -2,13 +2,12 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import {
+  LOTE_CAPACITY,
   NOME_LOTE_VENDIDOS,
   ordenarLotesPorNumero,
   proximoNumeroLote,
   selecionarProximoLoteSequencial
 } from "@/lib/lote-queue";
-
-const LOTE_CAPACITY = 10;
 
 // ---------------------------------------------------------------------------
 // Registra um log gerado automaticamente pelo sistema (sem sessão de usuário)
@@ -139,6 +138,113 @@ export async function sincronizarFilaAction(): Promise<{ error?: string }> {
     .eq("id", predecessor.id);
 
   return {};
+}
+
+// ---------------------------------------------------------------------------
+// Compacta os lotes: nunca deixa buraco no meio da sequência. Sempre que um
+// lote perde veículos (venda), puxa veículos dos lotes seguintes/últimos
+// para preencher as vagas, na ordem Lote 1, 2, 3, ... — a sobra sempre fica
+// concentrada no(s) último(s) lote(s), e lotes finais que ficam vazios são
+// removidos. Assim, quando chegar o horário de disparo de qualquer lote da
+// sequência, ele sempre tem veículo pra disparar (a não ser que o total de
+// veículos ativos seja menor que o número de lotes existentes).
+// ---------------------------------------------------------------------------
+export async function compactarLotesAction(): Promise<{
+  veiculosRealocados: number;
+  lotesRemovidos: number;
+  error?: string;
+}> {
+  const supabase = createSupabaseServerClient();
+
+  // Fecha buracos/duplicatas na numeração dos nomes antes de compactar
+  await renumerarLotesAction();
+
+  const { data: lotesRaw, error: lotesErr } = await supabase
+    .from("lotes")
+    .select("id, nome, created_at")
+    .neq("nome", NOME_LOTE_VENDIDOS);
+
+  if (lotesErr) return { veiculosRealocados: 0, lotesRemovidos: 0, error: lotesErr.message };
+
+  const lotesOrdenados = ordenarLotesPorNumero(
+    (lotesRaw ?? []) as { id: string; nome: string; created_at: string }[]
+  );
+  if (lotesOrdenados.length === 0) return { veiculosRealocados: 0, lotesRemovidos: 0 };
+
+  const loteIds = lotesOrdenados.map((l) => l.id);
+
+  // Todos os veículos ainda "no ciclo" (não vendidos) nesses lotes
+  const { data: veiculosRaw, error: veicErr } = await supabase
+    .from("veiculos")
+    .select("id, lote_id, posicao_lote")
+    .in("lote_id", loteIds)
+    .neq("status", "vendido")
+    .order("posicao_lote", { ascending: true });
+
+  if (veicErr) return { veiculosRealocados: 0, lotesRemovidos: 0, error: veicErr.message };
+
+  const veiculos = (veiculosRaw ?? []) as { id: string; lote_id: string; posicao_lote: number }[];
+  if (veiculos.length === 0) return { veiculosRealocados: 0, lotesRemovidos: 0 };
+
+  // Achata mantendo a ordem: veículos do Lote 1 primeiro, depois Lote 2, ...
+  const loteIndexById = new Map(lotesOrdenados.map((l, i) => [l.id, i]));
+  const fila = [...veiculos].sort((a, b) => {
+    const idxA = loteIndexById.get(a.lote_id) ?? Number.POSITIVE_INFINITY;
+    const idxB = loteIndexById.get(b.lote_id) ?? Number.POSITIVE_INFINITY;
+    if (idxA !== idxB) return idxA - idxB;
+    return a.posicao_lote - b.posicao_lote;
+  });
+
+  // Reempacota: os primeiros LOTE_CAPACITY vão pro Lote 1, os próximos pro
+  // Lote 2, e assim por diante — nunca deixando buraco no meio da sequência.
+  let veiculosRealocados = 0;
+  const atualizacoes: PromiseLike<unknown>[] = [];
+
+  fila.forEach((veiculo, i) => {
+    const loteDestino = lotesOrdenados[Math.floor(i / LOTE_CAPACITY)];
+    const novaPosicao = (i % LOTE_CAPACITY) + 1;
+
+    if (veiculo.lote_id !== loteDestino.id || veiculo.posicao_lote !== novaPosicao) {
+      veiculosRealocados++;
+      atualizacoes.push(
+        supabase
+          .from("veiculos")
+          .update({ lote_id: loteDestino.id, posicao_lote: novaPosicao, updated_at: new Date().toISOString() })
+          .eq("id", veiculo.id)
+      );
+    }
+  });
+
+  await Promise.all(atualizacoes);
+
+  // Remove lotes finais que ficaram vazios após a compactação
+  const lotesNecessarios = Math.ceil(fila.length / LOTE_CAPACITY);
+  const lotesVaziosNoFim = lotesOrdenados.slice(lotesNecessarios);
+
+  let lotesRemovidos = 0;
+  if (lotesVaziosNoFim.length > 0) {
+    const idsParaRemover = lotesVaziosNoFim.map((l) => l.id);
+    const { error: delErr } = await supabase.from("lotes").delete().in("id", idsParaRemover);
+    if (!delErr) lotesRemovidos = idsParaRemover.length;
+  }
+
+  // Renumera os nomes de novo (fecha gaps deixados pelas remoções) e garante
+  // que o ponteiro da fila continue válido (caso o lote removido fosse o
+  // "lote_da_vez", sincronizarFilaAction reinicializa a partir do primeiro).
+  await renumerarLotesAction();
+  await sincronizarFilaAction();
+
+  if (veiculosRealocados > 0 || lotesRemovidos > 0) {
+    await registrarLogSistema(
+      `Sistema compactou os lotes — ${veiculosRealocados} veículo${veiculosRealocados !== 1 ? "s" : ""} realocado${veiculosRealocados !== 1 ? "s" : ""}` +
+        (lotesRemovidos > 0
+          ? `, ${lotesRemovidos} lote${lotesRemovidos !== 1 ? "s" : ""} vazio${lotesRemovidos !== 1 ? "s" : ""} removido${lotesRemovidos !== 1 ? "s" : ""}`
+          : ""),
+      { acao: "lotes_compactados", veiculos_realocados: veiculosRealocados, lotes_removidos: lotesRemovidos }
+    );
+  }
+
+  return { veiculosRealocados, lotesRemovidos };
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,10 @@
 
 export const NOME_LOTE_VENDIDOS = "Vendidos";
 
+// Capacidade máxima de veículos ativos por lote (compartilhada por todas as
+// rotinas de alocação/compactação — evite duplicar esse número).
+export const LOTE_CAPACITY = 10;
+
 // Extrai o número de "Lote 12" -> 12. Retorna +Infinity se não achar número
 // (evita que nomes fora do padrão quebrem a ordenação, jogando-os pro final).
 export function extrairNumeroLote(nome: string): number {

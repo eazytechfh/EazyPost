@@ -10,7 +10,7 @@ import {
   toggleAdminAction,
   updateHorasPermitidasAction
 } from "@/app/actions/admin";
-import { rebalancearLotesAction } from "@/app/actions/lotes";
+import { compactarLotesAction, rebalancearLotesAction } from "@/app/actions/lotes";
 import { SectionHeader } from "./section-header";
 
 const TODAS_AS_HORAS = Array.from({ length: 24 }, (_, h) => h);
@@ -41,6 +41,13 @@ export function AdminUsuarios() {
     error?: string;
   } | null>(null);
   const [confirmRebalance, setConfirmRebalance] = useState(false);
+  const [compacting, setCompacting] = useState(false);
+  const [compactResult, setCompactResult] = useState<{
+    veiculosRealocados: number;
+    lotesRemovidos: number;
+    error?: string;
+  } | null>(null);
+  const [confirmCompact, setConfirmCompact] = useState(false);
 
   const [horasPermitidas, setHorasPermitidas] = useState<number[]>([]);
   const [horasLoading, setHorasLoading] = useState(true);
@@ -142,6 +149,15 @@ export function AdminUsuarios() {
     setRebalanceResult(result);
     setRebalancing(false);
     setConfirmRebalance(false);
+  }
+
+  async function handleCompactar() {
+    setCompacting(true);
+    setCompactResult(null);
+    const result = await compactarLotesAction();
+    setCompactResult(result);
+    setCompacting(false);
+    setConfirmCompact(false);
   }
 
   return (
@@ -374,6 +390,62 @@ export function AdminUsuarios() {
           >
             <Layers size={14} />
             Rebalancear Lotes
+          </button>
+        )}
+      </div>
+
+      {/* Compactação de Lotes */}
+      <div className="mt-10">
+        <h3 className="mb-1 text-sm font-semibold text-app-white">Compactar Lotes</h3>
+        <p className="mb-4 text-xs text-app-muted">
+          Puxa veículos dos lotes seguintes para fechar buracos deixados por vendas no meio da
+          sequência (ex: Lote 11 vazio enquanto o Lote 18 ainda tem veículo). A sobra fica sempre
+          concentrada no(s) último(s) lote(s), e lotes finais que ficam vazios são removidos. Isso
+          já acontece automaticamente a cada venda — use este botão só se notar buracos antigos.
+        </p>
+
+        {compactResult ? (
+          <div className={`mb-4 rounded-md border p-3 text-sm ${compactResult.error ? "border-red-500/40 bg-red-500/10 text-red-400" : "border-app-green/40 bg-app-green/10 text-app-green"}`}>
+            {compactResult.error ? (
+              compactResult.error
+            ) : compactResult.veiculosRealocados === 0 && compactResult.lotesRemovidos === 0 ? (
+              "Nenhum buraco encontrado. A sequência de lotes já está compactada."
+            ) : (
+              <>
+                <span className="font-bold">{compactResult.veiculosRealocados}</span> veículo{compactResult.veiculosRealocados !== 1 ? "s" : ""} realocado{compactResult.veiculosRealocados !== 1 ? "s" : ""}.
+                {compactResult.lotesRemovidos > 0 && (
+                  <> <span className="font-bold">{compactResult.lotesRemovidos}</span> lote{compactResult.lotesRemovidos !== 1 ? "s vazios removidos" : " vazio removido"}.</>
+                )}
+              </>
+            )}
+          </div>
+        ) : null}
+
+        {confirmCompact ? (
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-app-muted">Confirmar compactação?</span>
+            <button
+              onClick={() => void handleCompactar()}
+              disabled={compacting}
+              className="flex items-center gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-sm font-semibold text-yellow-400 hover:bg-yellow-500/20 disabled:opacity-50 transition"
+            >
+              {compacting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Confirmar
+            </button>
+            <button
+              onClick={() => setConfirmCompact(false)}
+              className="rounded-md border border-app-border px-3 py-2 text-sm text-app-muted hover:text-app-white transition"
+            >
+              Cancelar
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => { setConfirmCompact(true); setCompactResult(null); }}
+            className="flex items-center gap-2 rounded-md border border-app-border bg-app-card px-3 py-2 text-sm font-semibold text-app-muted hover:border-yellow-500 hover:text-yellow-400 transition"
+          >
+            <Layers size={14} />
+            Compactar Lotes
           </button>
         )}
       </div>

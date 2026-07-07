@@ -1,12 +1,10 @@
 "use server";
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { NOME_LOTE_VENDIDOS, proximoNumeroLote } from "@/lib/lote-queue";
-import { renumerarLotesAction } from "@/app/actions/lotes";
+import { LOTE_CAPACITY, NOME_LOTE_VENDIDOS, proximoNumeroLote } from "@/lib/lote-queue";
+import { compactarLotesAction } from "@/app/actions/lotes";
 
 type ActionResult<T> = { data: T; error?: never } | { data?: never; error: string };
-
-const LOTE_CAPACITY = 10;
 
 type VehiclePayload = {
   nome_anuncio: string;
@@ -221,99 +219,14 @@ export async function venderVeiculoAction(
     }
   });
 
-  // 3.1 Renumera a sequência de nomes dos lotes (fecha buracos/duplicatas
-  // como "Lote 6, 8, 10" -> "Lote 6, 7, 8"), sempre que uma venda acontece.
-  await renumerarLotesAction();
-
-  // 4. Renumera as posições dos veículos no lote original (fecha o buraco
-  // de posição deixado pelo veículo vendido)
+  // 4. Compacta os lotes: puxa veículos dos lotes seguintes/últimos para
+  // fechar a vaga aberta pela venda, sem deixar buraco no meio da sequência
+  // (a sobra sempre fica concentrada no(s) último(s) lote(s)). Também
+  // renumera nomes e remove lotes finais que ficaram vazios.
   if (!originalLoteId || originalLoteId === loteVendidosId) return {};
 
-  const { data: remainingRaw } = await supabase
-    .from("veiculos")
-    .select("id, posicao_lote")
-    .eq("lote_id", originalLoteId)
-    .neq("id", vehicleId)
-    .order("posicao_lote", { ascending: true });
-
-  const remaining = (remainingRaw ?? []) as { id: string; posicao_lote: number }[];
-
-  await Promise.all(
-    remaining.map((v, idx) =>
-      supabase.from("veiculos")
-        .update({ posicao_lote: idx + 1, updated_at: new Date().toISOString() })
-        .eq("id", v.id)
-    )
-  );
-
-  // 5. Preenche a vaga com 1 veículo do lote com MENOS veículos
-  // (excluindo Lote Vendidos e o próprio lote original)
-  const { data: outrosLotesRaw } = await supabase
-    .from("lotes")
-    .select("id")
-    .neq("id", loteVendidosId)
-    .neq("id", originalLoteId)
-    .neq("nome", NOME_LOTE_VENDIDOS);
-
-  const outrosLoteIds = ((outrosLotesRaw ?? []) as { id: string }[]).map((l) => l.id);
-
-  if (outrosLoteIds.length === 0) return {};
-
-  // Conta veículos (não vendidos) em cada lote
-  const contagems = await Promise.all(
-    outrosLoteIds.map(async (id) => {
-      const { count } = await supabase
-        .from("veiculos")
-        .select("id", { count: "exact", head: true })
-        .eq("lote_id", id)
-        .neq("status", "vendido");
-      return { id, count: count ?? 0 };
-    })
-  );
-
-  // Ordena: menor contagem primeiro, ignora lotes vazios
-  const comVeiculos = contagems.filter((l) => l.count > 0);
-  if (comVeiculos.length === 0) return {};
-
-  comVeiculos.sort((a, b) => a.count - b.count);
-  const fonteLoteId = comVeiculos[0].id;
-
-  // Pega o último veículo do lote fonte (por posicao_lote desc)
-  const { data: candidatoRaw } = await supabase
-    .from("veiculos")
-    .select("id, posicao_lote")
-    .eq("lote_id", fonteLoteId)
-    .neq("status", "vendido")
-    .order("posicao_lote", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!candidatoRaw) return {};
-  const candidato = candidatoRaw as { id: string; posicao_lote: number };
-
-  // Move o candidato para o lote original
-  const novaPosicao = remaining.length + 1; // próxima posição disponível
-  await supabase
-    .from("veiculos")
-    .update({ lote_id: originalLoteId, posicao_lote: novaPosicao, updated_at: new Date().toISOString() })
-    .eq("id", candidato.id);
-
-  // Renumera o lote fonte após a remoção
-  const { data: fonteRestanteRaw } = await supabase
-    .from("veiculos")
-    .select("id, posicao_lote")
-    .eq("lote_id", fonteLoteId)
-    .neq("id", candidato.id)
-    .order("posicao_lote", { ascending: true });
-
-  const fonteRestante = (fonteRestanteRaw ?? []) as { id: string; posicao_lote: number }[];
-  await Promise.all(
-    fonteRestante.map((v, idx) =>
-      supabase.from("veiculos")
-        .update({ posicao_lote: idx + 1, updated_at: new Date().toISOString() })
-        .eq("id", v.id)
-    )
-  );
+  const { error: compactErr } = await compactarLotesAction();
+  if (compactErr) return { error: compactErr };
 
   return {};
 }
