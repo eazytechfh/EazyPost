@@ -16,6 +16,7 @@ export type Veiculo = {
   fipe: string;
   placa: string;
   tipo: string;
+  local: string;
   texto_anuncio: string;
   imagens: string[];
   status: string;

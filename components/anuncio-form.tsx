@@ -233,6 +233,7 @@ export function AnuncioForm() {
         fipe: form.fipe,
         placa: placaFinal,
         tipo: form.tipo,
+        local: form.local,
         texto_anuncio: form.texto_anuncio,
         imagens: imageUrls
       });

@@ -26,6 +26,7 @@ create table if not exists public.veiculos (
 alter table public.veiculos add column if not exists fipe text not null default '';
 alter table public.veiculos add column if not exists placa text not null default '';
 alter table public.veiculos add column if not exists tipo text not null default 'aleatorio';
+alter table public.veiculos add column if not exists local text not null default '';
 
 create table if not exists public.lotes (
   id uuid primary key default gen_random_uuid(),

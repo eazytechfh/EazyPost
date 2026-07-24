@@ -15,6 +15,7 @@ type VehiclePayload = {
   fipe: string;
   placa: string;
   tipo: string;
+  local: string;
   texto_anuncio: string;
   imagens: string[];
 };

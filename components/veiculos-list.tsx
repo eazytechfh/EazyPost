@@ -18,7 +18,7 @@ import { SectionHeader } from "./section-header";
 const PAGE_SIZE = 12;
 const NOME_LOTE_VENDIDOS = "Vendidos";
 
-type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor" | "texto_anuncio" | "fipe" | "placa" | "tipo"> & {
+type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor" | "texto_anuncio" | "fipe" | "placa" | "tipo" | "local"> & {
   valor: string;
   pericia_aprova: boolean;
   pericia_motivo: string;
@@ -397,6 +397,7 @@ export function VeiculosList() {
       fipe: veiculo.fipe,
       placa: veiculo.placa,
       tipo: veiculo.tipo,
+      local: veiculo.local,
       texto_anuncio: texto,
       pericia_aprova: extractFromTexto(texto, "pericia") === "sim",
       pericia_motivo: extractMotivo(texto),
@@ -446,6 +447,7 @@ export function VeiculosList() {
         fipe: editForm.fipe,
         placa: editForm.placa,
         tipo: editForm.tipo,
+        local: editForm.local,
         valor: parseCurrencyInput(editForm.valor),
         imagens: novasImagens,
         updated_at: new Date().toISOString()
@@ -1068,6 +1070,7 @@ export function VeiculosList() {
               <EditInput label="FIPE" value={editForm.fipe} onChange={(value) => setEditForm({ ...editForm, fipe: value })} />
               <EditInput label="Cor" value={editForm.cor} onChange={(value) => setEditForm({ ...editForm, cor: value })} />
               <EditInput label="Placa" value={editForm.placa} onChange={(value) => setEditForm({ ...editForm, placa: value.toUpperCase() })} />
+              <EditInput label="Local / Fornecedor" value={editForm.local} onChange={(value) => setEditForm({ ...editForm, local: value })} />
               <label className="space-y-2">
                 <span className="app-label">Tipo</span>
                 <select className="app-input" value={editForm.tipo} onChange={(e) => setEditForm({ ...editForm, tipo: e.target.value })} required>
@@ -1686,10 +1689,20 @@ function VehicleCard({
           <Info label="Motor" value={veiculo.motor} />
           <Info label="Cor" value={veiculo.cor} />
         </dl>
-        {veiculo.placa ? (
-          <p className="mt-2 text-xs text-app-muted">
-            Placa: <span className="font-semibold text-app-white">{veiculo.placa}</span>
-          </p>
+        {(veiculo.placa || veiculo.local) ? (
+          <div className="mt-2 flex items-end justify-between gap-2 text-xs text-app-muted">
+            {veiculo.placa ? (
+              <p>
+                Placa: <span className="font-semibold text-app-white">{veiculo.placa}</span>
+              </p>
+            ) : <span />}
+            {veiculo.local ? (
+              <p className="text-right">
+                <span className="block text-[10px] uppercase text-app-muted">Local / Fornecedor</span>
+                <span className="font-semibold text-app-white">{veiculo.local}</span>
+              </p>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </article>
