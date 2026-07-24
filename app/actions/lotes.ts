@@ -311,6 +311,13 @@ export async function avancarLoteDaVezAction(): Promise<{
 
   if (setErr) return { loteFoiDisparado: { id: loteDisparado.id, nome: loteDisparado.nome }, error: setErr.message };
 
+  // Carimba a data/hora do envio nos veículos ativos do lote que acabou de disparar
+  await supabase
+    .from("veiculos")
+    .update({ ultimo_envio_em: new Date().toISOString() })
+    .eq("lote_id", loteDisparado.id)
+    .eq("status", "ativo");
+
   await registrarLogSistema(
     `Sistema disparou o webhook para o lote "${loteDisparado.nome}" (${loteDisparado.veiculos_ativos} veículo${loteDisparado.veiculos_ativos !== 1 ? "s" : ""} ativo${loteDisparado.veiculos_ativos !== 1 ? "s" : ""})`,
     {
@@ -471,6 +478,99 @@ export async function rebalancearLotesAction(): Promise<{
   );
 
   return { lotesAfetados: lotesComExcesso.size, veiculosMigrados, novosLotesCriados };
+}
+
+// ---------------------------------------------------------------------------
+// Move um único veículo para o próximo lote da sequência numérica (Lote 1 ->
+// Lote 2 -> ... -> Lote N -> Lote 1, circular), usado pelo botão "Mover para
+// o próximo lote" da aba Relatórios. Insere o veículo no fim do lote destino
+// e fecha a lacuna deixada no lote de origem renumerando as posições.
+// ---------------------------------------------------------------------------
+export async function moverParaProximoLoteAction(
+  veiculoId: string
+): Promise<{ loteDestino?: { id: string; nome: string }; error?: string }> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Não autenticado." };
+
+  const { data: veiculoRaw, error: veicErr } = await supabase
+    .from("veiculos")
+    .select("id, lote_id, nome_anuncio")
+    .eq("id", veiculoId)
+    .single();
+
+  if (veicErr || !veiculoRaw) return { error: veicErr?.message ?? "Veículo não encontrado." };
+  const veiculo = veiculoRaw as { id: string; lote_id: string | null; nome_anuncio: string };
+
+  const { data: lotesRaw, error: lotesErr } = await supabase
+    .from("lotes")
+    .select("id, nome, created_at")
+    .neq("nome", NOME_LOTE_VENDIDOS);
+
+  if (lotesErr) return { error: lotesErr.message };
+
+  const lotesOrdenados = ordenarLotesPorNumero(
+    (lotesRaw ?? []) as { id: string; nome: string; created_at: string }[]
+  );
+  if (lotesOrdenados.length === 0) return { error: "Nenhum lote cadastrado." };
+
+  const idxAtual = veiculo.lote_id ? lotesOrdenados.findIndex((l) => l.id === veiculo.lote_id) : -1;
+  const loteDestino = idxAtual === -1
+    ? lotesOrdenados[0]
+    : lotesOrdenados[(idxAtual + 1) % lotesOrdenados.length];
+
+  if (veiculo.lote_id === loteDestino.id) {
+    return { error: "Só existe um lote na sequência — não há próximo lote para mover." };
+  }
+
+  const { count: countDestino } = await supabase
+    .from("veiculos")
+    .select("id", { count: "exact", head: true })
+    .eq("lote_id", loteDestino.id)
+    .neq("status", "vendido");
+
+  if ((countDestino ?? 0) >= LOTE_CAPACITY) {
+    return { error: `O lote "${loteDestino.nome}" está cheio (${LOTE_CAPACITY} veículos).` };
+  }
+
+  const { error: moveErr } = await supabase
+    .from("veiculos")
+    .update({
+      lote_id: loteDestino.id,
+      posicao_lote: (countDestino ?? 0) + 1,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", veiculoId);
+
+  if (moveErr) return { error: moveErr.message };
+
+  // Fecha a lacuna deixada no lote de origem, renumerando as posições restantes
+  if (veiculo.lote_id) {
+    const { data: restantes } = await supabase
+      .from("veiculos")
+      .select("id")
+      .eq("lote_id", veiculo.lote_id)
+      .neq("status", "vendido")
+      .order("posicao_lote", { ascending: true });
+
+    await Promise.all(
+      ((restantes ?? []) as { id: string }[]).map((v, idx) =>
+        supabase.from("veiculos").update({ posicao_lote: idx + 1 }).eq("id", v.id)
+      )
+    );
+  }
+
+  await supabase.from("logs_auditoria").insert({
+    user_email: user.email ?? "",
+    user_id: user.id,
+    acao: `Usuario ${user.email ?? ""} moveu o veículo [${veiculo.nome_anuncio}] para o próximo lote [${loteDestino.nome}]`,
+    entidade: "veiculo",
+    entidade_id: veiculoId,
+    detalhes: { lote_anterior: veiculo.lote_id, lote_destino: loteDestino.id, lote_destino_nome: loteDestino.nome }
+  });
+
+  return { loteDestino: { id: loteDestino.id, nome: loteDestino.nome } };
 }
 
 // ---------------------------------------------------------------------------

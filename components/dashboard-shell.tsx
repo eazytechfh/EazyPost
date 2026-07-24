@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, Car, ClipboardList, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
+import { BarChart3, CalendarClock, Car, ClipboardList, Layers, ListChecks, LogOut, MessageCircle, PlusCircle, Smartphone, Timer, Users } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { calcularStatusDisparo, ordenarLotesPorNumero, selecionarProximoLoteSequencial } from "@/lib/lote-queue";
 
@@ -15,7 +15,8 @@ const navItems = [
   { href: "/dashboard/veiculos", label: "Lista de Veiculos", icon: Car },
   { href: "/dashboard/programacao", label: "Programação", icon: CalendarClock },
   { href: "/dashboard/grupos", label: "Grupos", icon: MessageCircle },
-  { href: "/dashboard/whatsapp", label: "Conectar WhatsApp", icon: Smartphone }
+  { href: "/dashboard/whatsapp", label: "Conectar WhatsApp", icon: Smartphone },
+  { href: "/dashboard/relatorios", label: "Relatórios", icon: BarChart3 }
 ];
 
 const adminNavItems = [
@@ -323,7 +324,7 @@ export function DashboardShell({
             </button>
           </div>
         </div>
-        <nav className={`grid gap-1.5 ${isAdmin ? "grid-cols-6" : "grid-cols-5"}`}>
+        <nav className={`grid gap-1.5 ${isAdmin ? "grid-cols-7" : "grid-cols-6"}`}>
           {[...navItems, ...(isAdmin ? adminNavItems : [])].map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;

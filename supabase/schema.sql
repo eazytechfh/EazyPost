@@ -39,6 +39,11 @@ alter table public.veiculos add column if not exists posicao_lote integer not nu
 
 alter table public.lotes add column if not exists lote_da_vez boolean not null default false;
 
+-- Data/hora do último envio (disparo do lote) do veículo. Preenchida
+-- automaticamente sempre que o lote do veículo é disparado, mas também pode
+-- ser editada manualmente na aba Relatórios.
+alter table public.veiculos add column if not exists ultimo_envio_em timestamp with time zone;
+
 -- Coluna de admin no perfil
 alter table public.profiles add column if not exists is_admin boolean not null default false;
 

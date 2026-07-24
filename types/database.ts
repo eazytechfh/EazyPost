@@ -21,6 +21,7 @@ export type Veiculo = {
   status: string;
   lote_id: string | null;
   posicao_lote: number;
+  ultimo_envio_em: string | null;
   created_at: string;
   updated_at: string;
 } & Record<string, unknown>;
