@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { LOTE_CAPACITY, NOME_LOTE_VENDIDOS, proximoNumeroLote } from "@/lib/lote-queue";
+import { buildAutomaticGroupLinks } from "@/lib/anuncio-groups";
 import { compactarLotesAction } from "@/app/actions/lotes";
 
 type ActionResult<T> = { data: T; error?: never } | { data?: never; error: string };
@@ -25,7 +26,7 @@ type VehiclePayload = {
 // ---------------------------------------------------------------------------
 export async function criarAnuncioAction(
   payload: VehiclePayload
-): Promise<ActionResult<{ id: string; lote_nome: string }>> {
+): Promise<ActionResult<{ id: string; lote_nome: string; grupos_salvos: number }>> {
   const supabase = createSupabaseServerClient();
 
   const {
@@ -35,6 +36,17 @@ export async function criarAnuncioAction(
 
   // Garante que o profile existe
   await supabase.from("profiles").upsert({ id: user.id, email: user.email ?? "" });
+
+  // Carrega os grupos antes de criar o veiculo para nao concluir o cadastro
+  // caso a associacao automatica nao possa ser preparada.
+  const { data: grupos, error: gruposError } = await supabase
+    .from("id_dos_grupos")
+    .select("id")
+    .not("id_do_grupo", "is", null);
+
+  if (gruposError) {
+    return { error: `Nao foi possivel carregar os grupos do anuncio: ${gruposError.message}` };
+  }
 
   // 1. Insere o veículo
   const { data: newVehicle, error: insertErr } = await supabase
@@ -54,6 +66,24 @@ export async function criarAnuncioAction(
   }
 
   const vehicleId = (newVehicle as { id: string }).id;
+
+  // Vincula automaticamente o novo anuncio a todos os grupos validos.
+  const grupoInserts = buildAutomaticGroupLinks(
+    (grupos ?? []) as { id: string }[],
+    vehicleId,
+    user.id
+  );
+
+  if (grupoInserts.length > 0) {
+    const { error: linksError } = await supabase.from("anuncio_grupos").insert(grupoInserts);
+
+    if (linksError) {
+      // O veiculo ainda nao foi alocado em lote, portanto pode ser removido
+      // com seguranca se os vinculos obrigatorios falharem.
+      await supabase.from("veiculos").delete().eq("id", vehicleId);
+      return { error: `Nao foi possivel salvar o anuncio nos grupos: ${linksError.message}` };
+    }
+  }
 
   // 2. Busca todos os lotes
   const { data: lotes } = await supabase
@@ -95,7 +125,7 @@ export async function criarAnuncioAction(
       .single();
 
     if (loteErr || !novoLote) {
-      return { data: { id: vehicleId, lote_nome: "?" } };
+      return { data: { id: vehicleId, lote_nome: "?", grupos_salvos: grupoInserts.length } };
     }
 
     targetLote = novoLote as { id: string; nome: string; lote_da_vez: boolean };
@@ -134,23 +164,13 @@ export async function criarAnuncioAction(
     .update({ lote_id: targetLote.id, posicao_lote: insertIndex })
     .eq("id", vehicleId);
 
-  // 9. Vincula automaticamente a todos os grupos cadastrados com id_do_grupo preenchido
-  const { data: grupos } = await supabase
-    .from("id_dos_grupos")
-    .select("id")
-    .not("id_do_grupo", "is", null);
-
-  if (grupos && grupos.length > 0) {
-    const grupoInserts = (grupos as { id: string }[]).map((grupo) => ({
-      veiculo_id: vehicleId,
-      grupo_id: grupo.id,
-      user_id: user.id,
-      programado: false
-    }));
-    await supabase.from("anuncio_grupos").insert(grupoInserts);
-  }
-
-  return { data: { id: vehicleId, lote_nome: targetLote.nome } };
+  return {
+    data: {
+      id: vehicleId,
+      lote_nome: targetLote.nome,
+      grupos_salvos: grupoInserts.length
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------

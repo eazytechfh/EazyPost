@@ -124,7 +124,7 @@ export function AnuncioForm() {
   const [form, setForm] = useState<FormState>(initialState);
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
-  const [message, setMessage] = useState<{ text: string; lote?: string } | null>(null);
+  const [message, setMessage] = useState<{ text: string; lote?: string; gruposSalvos?: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [placaDuplicada, setPlacaDuplicada] = useState(false);
 
@@ -254,7 +254,11 @@ export function AnuncioForm() {
       setForm(initialState);
       setFiles([]);
       setPreviews([]);
-      setMessage({ text: "Anuncio cadastrado com sucesso.", lote: result.data?.lote_nome });
+      setMessage({
+        text: "Anuncio cadastrado com sucesso.",
+        lote: result.data?.lote_nome,
+        gruposSalvos: result.data?.grupos_salvos
+      });
     } catch (error) {
       console.error("Erro ao cadastrar anuncio:", error);
       setMessage({ text: getErrorMessage(error, "Nao foi possivel cadastrar o anuncio.") });
@@ -534,6 +538,12 @@ export function AnuncioForm() {
               <p className="mt-1 flex items-center gap-1.5 font-semibold text-app-green">
                 <Layers size={13} />
                 Alocado em: {message.lote}
+              </p>
+            ) : null}
+            {typeof message.gruposSalvos === "number" ? (
+              <p className="mt-1 font-semibold text-app-green">
+                Salvo automaticamente em {message.gruposSalvos}{" "}
+                {message.gruposSalvos === 1 ? "grupo" : "grupos"}.
               </p>
             ) : null}
           </div>
