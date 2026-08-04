@@ -116,6 +116,36 @@ create table if not exists public.anuncio_grupos (
   created_at timestamp with time zone default now()
 );
 
+-- Mantem somente o vinculo mais antigo de cada veiculo/grupo antes de
+-- ativar a protecao contra duplicidades em bancos que ja possuem dados.
+with vinculos_duplicados as (
+  select
+    id,
+    row_number() over (
+      partition by veiculo_id, grupo_id
+      order by created_at asc nulls first, id asc
+    ) as numero
+  from public.anuncio_grupos
+)
+delete from public.anuncio_grupos
+using vinculos_duplicados
+where public.anuncio_grupos.id = vinculos_duplicados.id
+  and vinculos_duplicados.numero > 1;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'anuncio_grupos_veiculo_grupo_key'
+      and conrelid = 'public.anuncio_grupos'::regclass
+  ) then
+    alter table public.anuncio_grupos
+      add constraint anuncio_grupos_veiculo_grupo_key unique (veiculo_id, grupo_id);
+  end if;
+end
+$$;
+
 alter table public.anuncio_grupos
   drop constraint if exists anuncio_grupos_grupo_id_fkey;
 

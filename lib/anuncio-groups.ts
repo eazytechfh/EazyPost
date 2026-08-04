@@ -10,7 +10,9 @@ export function buildAutomaticGroupLinks(
   vehicleId: string,
   userId: string
 ): AutomaticGroupLink[] {
-  return grupos.map((grupo) => ({
+  const uniqueGroups = Array.from(new Map(grupos.map((grupo) => [grupo.id, grupo])).values());
+
+  return uniqueGroups.map((grupo) => ({
     veiculo_id: vehicleId,
     grupo_id: grupo.id,
     user_id: userId,

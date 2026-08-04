@@ -31,3 +31,18 @@ test("cria um vinculo automatico para cada grupo valido", async () => {
     }
   ]);
 });
+
+test("nao cria o mesmo grupo mais de uma vez para o veiculo", async () => {
+  const { buildAutomaticGroupLinks } = await import("../lib/anuncio-groups.ts");
+
+  const links = buildAutomaticGroupLinks(
+    [{ id: "grupo-1" }, { id: "grupo-1" }, { id: "grupo-2" }],
+    "veiculo-1",
+    "usuario-1"
+  );
+
+  assert.deepEqual(
+    links.map((link) => link.grupo_id),
+    ["grupo-1", "grupo-2"]
+  );
+});
