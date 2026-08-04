@@ -75,10 +75,7 @@ export async function criarAnuncioAction(
   );
 
   if (grupoInserts.length > 0) {
-    const { error: linksError } = await supabase.from("anuncio_grupos").upsert(grupoInserts, {
-      onConflict: "veiculo_id,grupo_id",
-      ignoreDuplicates: true
-    });
+    const { error: linksError } = await supabase.from("anuncio_grupos").insert(grupoInserts);
 
     if (linksError) {
       // O veiculo ainda nao foi alocado em lote, portanto pode ser removido

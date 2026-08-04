@@ -741,16 +741,12 @@ export function VeiculosList() {
       if (deleteError) throw deleteError;
 
       if (groupIdsToInsert.length > 0) {
-        const { error } = await supabase.from("anuncio_grupos").upsert(
+        const { error } = await supabase.from("anuncio_grupos").insert(
           groupIdsToInsert.map((groupId) => ({
             veiculo_id: vehicleId,
             grupo_id: groupId,
             user_id: user.id
-          })),
-          {
-            onConflict: "veiculo_id,grupo_id",
-            ignoreDuplicates: true
-          }
+          }))
         );
         if (error) throw error;
       }
