@@ -153,6 +153,30 @@ alter table public.anuncio_grupos
   add constraint anuncio_grupos_grupo_id_fkey
   foreign key (grupo_id) references public.id_dos_grupos(id) on delete cascade;
 
+create or replace function public.auto_link_vehicle_to_groups()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.anuncio_grupos (veiculo_id, grupo_id, user_id, programado)
+  select new.id, grupo.id, new.user_id, false
+  from public.id_dos_grupos as grupo
+  where grupo.id_do_grupo is not null
+    and btrim(grupo.id_do_grupo) <> ''
+  on conflict (veiculo_id, grupo_id) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists auto_link_vehicle_to_groups on public.veiculos;
+
+create trigger auto_link_vehicle_to_groups
+  after insert on public.veiculos
+  for each row execute function public.auto_link_vehicle_to_groups();
+
 alter table public.profiles enable row level security;
 alter table public.veiculos enable row level security;
 alter table public.id_dos_grupos enable row level security;

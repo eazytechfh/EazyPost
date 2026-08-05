@@ -75,7 +75,12 @@ export async function criarAnuncioAction(
   );
 
   if (grupoInserts.length > 0) {
-    const { error: linksError } = await supabase.from("anuncio_grupos").insert(grupoInserts);
+    // O banco tambem cria estes vinculos por trigger. O upsert torna a action
+    // compativel tanto antes quanto depois da migration, sem gerar duplicatas.
+    const { error: linksError } = await supabase.from("anuncio_grupos").upsert(grupoInserts, {
+      onConflict: "veiculo_id,grupo_id",
+      ignoreDuplicates: true
+    });
 
     if (linksError) {
       // O veiculo ainda nao foi alocado em lote, portanto pode ser removido
