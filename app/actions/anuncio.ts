@@ -75,7 +75,11 @@ export async function criarAnuncioAction(
   );
 
   if (grupoInserts.length > 0) {
-    const { error: linksError } = await supabase.from("anuncio_grupos").insert(grupoInserts);
+    // upsert ignorando duplicados: se algum trigger do banco ja vinculou o veiculo aos
+    // grupos ao inserir, o vinculo existente e mantido em vez de violar a unique constraint.
+    const { error: linksError } = await supabase
+      .from("anuncio_grupos")
+      .upsert(grupoInserts, { onConflict: "veiculo_id,grupo_id", ignoreDuplicates: true });
 
     if (linksError) {
       // O veiculo ainda nao foi alocado em lote, portanto pode ser removido

@@ -59,7 +59,11 @@ PAGAMENTO NO CARTÃO DE CRÉDITO EM ATÉ 24X, FINANCIAMENTO EM TODOS OS BANCOS, 
 
 VEÍCULOS PARA FORA DO ESTADO DO PARANÁ: ADICIONAL DE 1% DO VALOR DA VENDA PARA NF
 
-📍 ${local}${empresa}`;
+📍 ${local}${empresa}
+
+🏢 Endereço: Rua Miguel José Grein, 38 – Xaxim, Curitiba/PR.
+
+📲 WhatsApp de Compras: (41) 99157-2733`;
 }
 
 /** Extrai do texto já gerado os campos que não têm coluna própria no banco. */
