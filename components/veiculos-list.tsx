@@ -12,6 +12,7 @@ import { LOTE_CAPACITY, ordenarLotesPorNumero, selecionarProximoLoteSequencial }
 import { venderVeiculoAction } from "@/app/actions/anuncio";
 import { cleanCurrencyInput, formatCurrency, parseCurrencyInput } from "@/lib/format";
 import type { AnuncioGrupo, IdDosGrupos, Lote, Veiculo } from "@/types/database";
+import { buildAnuncioTemplate, parseAnuncioTexto } from "@/lib/anuncio-template";
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
 
@@ -23,6 +24,12 @@ type EditState = Pick<Veiculo, "nome_anuncio" | "quilometragem" | "motor" | "cor
   pericia_aprova: boolean;
   pericia_motivo: string;
   leilao: boolean;
+  ano: string;
+  cambio: string;
+  sinistro: boolean;
+  valor_promocional_ativo: boolean;
+  valor_promocional: string;
+  empresa: string;
 };
 
 type LinkedGroupsByVehicle = Record<string, IdDosGrupos[]>;
@@ -50,17 +57,6 @@ function extractFromTexto(texto: string, field: "pericia" | "leilao") {
 function extractMotivo(texto: string): string {
   const m = texto.match(/^PERÍCIA:\s*NÃO APROVA[^-\n]*(?:\s*-\s*(.+))?$/m);
   return m?.[1]?.trim() ?? "";
-}
-
-function updateTextoLine(texto: string, field: "pericia" | "leilao", value: string, motivo?: string): string {
-  if (field === "leilao") {
-    const linha = value === "sim" ? "COM LEILÃO | SEM SINISTRO ✅" : "SEM LEILÃO | SEM SINISTRO ✅";
-    return texto.replace(/^(COM|SEM) LEILÃO.*$/m, linha);
-  }
-  const pericia = value === "sim"
-    ? "PERÍCIA: APROVA ✅"
-    : `PERÍCIA: NÃO APROVA ❌${motivo ? ` - ${motivo}` : ""}`;
-  return texto.replace(/^PERÍCIA:.*$/m, pericia);
 }
 
 function computeInsertIndex(veiculo: Veiculo, sorted: Veiculo[]): number {
@@ -401,11 +397,40 @@ export function VeiculosList() {
       texto_anuncio: texto,
       pericia_aprova: extractFromTexto(texto, "pericia") === "sim",
       pericia_motivo: extractMotivo(texto),
-      leilao: extractFromTexto(texto, "leilao") === "sim"
+      leilao: extractFromTexto(texto, "leilao") === "sim",
+      ...parseAnuncioTexto(texto, veiculo.local)
     });
     setEditNewFile(null);
     setEditPreview(veiculo.imagens?.[0] ?? null);
     setOpenMenu(null);
+  }
+
+  // Aplica a mudança e regenera o texto do anúncio com os dados atuais do formulário
+  function patchEdit(patch: Partial<EditState>) {
+    setEditForm((current) => {
+      if (!current) return current;
+      const next = { ...current, ...patch };
+      return {
+        ...next,
+        texto_anuncio: buildAnuncioTemplate({
+          nome_anuncio: next.nome_anuncio,
+          fipe: next.fipe,
+          valor: next.valor,
+          ano: next.ano,
+          quilometragem: next.quilometragem,
+          placa: next.placa,
+          cambio: next.cambio,
+          local: next.local,
+          pericia_aprova: next.pericia_aprova,
+          pericia_motivo: next.pericia_motivo,
+          leilao: next.leilao,
+          sinistro: next.sinistro,
+          valor_promocional_ativo: next.valor_promocional_ativo,
+          valor_promocional: next.valor_promocional,
+          empresa: next.empresa
+        })
+      };
+    });
   }
 
   function handleEditImage(file: File | null) {
@@ -1057,20 +1082,47 @@ export function VeiculosList() {
       {editing && editForm ? (
         <Modal title="Editar Anuncio" onClose={() => { setEditing(null); setEditNewFile(null); setEditPreview(null); }}>
           <form onSubmit={saveEdit} className="space-y-4">
-            <EditInput label="Nome" value={editForm.nome_anuncio} onChange={(value) => setEditForm({ ...editForm, nome_anuncio: value })} />
+            <EditInput label="Nome" value={editForm.nome_anuncio} onChange={(value) => patchEdit({ nome_anuncio: value })} />
             <div className="grid gap-4 sm:grid-cols-2">
-              <EditInput label="KM" value={editForm.quilometragem} onChange={(value) => setEditForm({ ...editForm, quilometragem: value })} />
+              <EditInput label="KM" value={editForm.quilometragem} onChange={(value) => patchEdit({ quilometragem: value })} />
               <EditInput label="Motor" value={editForm.motor} onChange={(value) => setEditForm({ ...editForm, motor: value })} />
-              <EditInput
-                label="Valor"
-                value={editForm.valor}
-                inputMode="numeric"
-                onChange={(value) => setEditForm({ ...editForm, valor: cleanCurrencyInput(value) })}
-              />
-              <EditInput label="FIPE" value={editForm.fipe} onChange={(value) => setEditForm({ ...editForm, fipe: value })} />
+              <EditInput label="Ano" value={editForm.ano} onChange={(value) => patchEdit({ ano: value })} />
+              <EditInput label="Câmbio" value={editForm.cambio} onChange={(value) => patchEdit({ cambio: value })} />
+              <div className="space-y-2">
+                <EditInput
+                  label="Valor"
+                  value={editForm.valor}
+                  inputMode="numeric"
+                  onChange={(value) => patchEdit({ valor: cleanCurrencyInput(value) })}
+                />
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                  <input
+                    type="checkbox"
+                    className="accent-app-green h-4 w-4"
+                    checked={editForm.valor_promocional_ativo}
+                    onChange={(e) =>
+                      patchEdit({
+                        valor_promocional_ativo: e.target.checked,
+                        ...(e.target.checked ? {} : { valor_promocional: "" })
+                      })
+                    }
+                  />
+                  Valor promocional
+                </label>
+              </div>
+              {editForm.valor_promocional_ativo ? (
+                <EditInput
+                  label="Valor promocional"
+                  value={editForm.valor_promocional}
+                  inputMode="numeric"
+                  onChange={(value) => patchEdit({ valor_promocional: cleanCurrencyInput(value) })}
+                />
+              ) : null}
+              <EditInput label="FIPE" value={editForm.fipe} onChange={(value) => patchEdit({ fipe: value })} />
               <EditInput label="Cor" value={editForm.cor} onChange={(value) => setEditForm({ ...editForm, cor: value })} />
-              <EditInput label="Placa" value={editForm.placa} onChange={(value) => setEditForm({ ...editForm, placa: value.toUpperCase() })} />
-              <EditInput label="Local / Fornecedor" value={editForm.local} onChange={(value) => setEditForm({ ...editForm, local: value })} />
+              <EditInput label="Placa" value={editForm.placa} onChange={(value) => patchEdit({ placa: value.toUpperCase() })} />
+              <EditInput label="Local / Fornecedor" value={editForm.local} onChange={(value) => patchEdit({ local: value })} />
+              <EditInput label="Empresa" value={editForm.empresa} onChange={(value) => patchEdit({ empresa: value })} />
               <label className="space-y-2">
                 <span className="app-label">Tipo</span>
                 <select className="app-input" value={editForm.tipo} onChange={(e) => setEditForm({ ...editForm, tipo: e.target.value })} required>
@@ -1088,10 +1140,7 @@ export function VeiculosList() {
                     name="edit_pericia"
                     className="accent-app-green h-4 w-4"
                     checked={editForm.pericia_aprova === true}
-                    onChange={() => {
-                      const texto = updateTextoLine(editForm.texto_anuncio, "pericia", "sim");
-                      setEditForm({ ...editForm, pericia_aprova: true, pericia_motivo: "", texto_anuncio: texto });
-                    }}
+                    onChange={() => patchEdit({ pericia_aprova: true, pericia_motivo: "" })}
                   />
                   SIM
                 </label>
@@ -1101,10 +1150,7 @@ export function VeiculosList() {
                     name="edit_pericia"
                     className="accent-app-green h-4 w-4"
                     checked={editForm.pericia_aprova === false}
-                    onChange={() => {
-                      const texto = updateTextoLine(editForm.texto_anuncio, "pericia", "nao", editForm.pericia_motivo);
-                      setEditForm({ ...editForm, pericia_aprova: false, texto_anuncio: texto });
-                    }}
+                    onChange={() => patchEdit({ pericia_aprova: false })}
                   />
                   NÃO
                 </label>
@@ -1114,11 +1160,7 @@ export function VeiculosList() {
                   className="app-input mt-2"
                   value={editForm.pericia_motivo}
                   placeholder="Informe o motivo"
-                  onChange={(e) => {
-                    const motivo = e.target.value;
-                    const texto = updateTextoLine(editForm.texto_anuncio, "pericia", "nao", motivo);
-                    setEditForm({ ...editForm, pericia_motivo: motivo, texto_anuncio: texto });
-                  }}
+                  onChange={(e) => patchEdit({ pericia_motivo: e.target.value })}
                 />
               )}
             </div>
@@ -1126,29 +1168,28 @@ export function VeiculosList() {
               <span className="app-label">Leilão?</span>
               <div className="flex gap-4">
                 <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
-                  <input
-                    type="radio"
-                    name="edit_leilao"
-                    className="accent-app-green h-4 w-4"
-                    checked={editForm.leilao === false}
-                    onChange={() => {
-                      const texto = updateTextoLine(editForm.texto_anuncio, "leilao", "nao");
-                      setEditForm({ ...editForm, leilao: false, texto_anuncio: texto });
-                    }}
-                  />
+                  <input type="radio" name="edit_leilao" className="accent-app-green h-4 w-4"
+                    checked={editForm.leilao === false} onChange={() => patchEdit({ leilao: false })} />
                   NÃO (padrão)
                 </label>
                 <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
-                  <input
-                    type="radio"
-                    name="edit_leilao"
-                    className="accent-app-green h-4 w-4"
-                    checked={editForm.leilao === true}
-                    onChange={() => {
-                      const texto = updateTextoLine(editForm.texto_anuncio, "leilao", "sim");
-                      setEditForm({ ...editForm, leilao: true, texto_anuncio: texto });
-                    }}
-                  />
+                  <input type="radio" name="edit_leilao" className="accent-app-green h-4 w-4"
+                    checked={editForm.leilao === true} onChange={() => patchEdit({ leilao: true })} />
+                  SIM
+                </label>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <span className="app-label">Sinistro?</span>
+              <div className="flex gap-4">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                  <input type="radio" name="edit_sinistro" className="accent-app-green h-4 w-4"
+                    checked={editForm.sinistro === false} onChange={() => patchEdit({ sinistro: false })} />
+                  NÃO (padrão)
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                  <input type="radio" name="edit_sinistro" className="accent-app-green h-4 w-4"
+                    checked={editForm.sinistro === true} onChange={() => patchEdit({ sinistro: true })} />
                   SIM
                 </label>
               </div>

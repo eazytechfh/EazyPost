@@ -7,6 +7,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { cleanCurrencyInput, parseCurrencyInput } from "@/lib/format";
 import { criarAnuncioAction } from "@/app/actions/anuncio";
 import { registrarLogComCliente } from "@/lib/audit-log";
+import { buildAnuncioTemplate } from "@/lib/anuncio-template";
 import { RichTextEditor } from "./rich-text-editor";
 import { SectionHeader } from "./section-header";
 
@@ -29,59 +30,12 @@ type FormState = {
   pericia_aprova: boolean;
   pericia_motivo: string;
   leilao: boolean;
+  sinistro: boolean;
+  valor_promocional_ativo: boolean;
+  valor_promocional: string;
+  empresa: string;
   texto_anuncio: string;
 };
-
-// ---------------------------------------------------------------------------
-// Template do anúncio
-// ---------------------------------------------------------------------------
-function buildAnuncioTemplate(fields: {
-  nome_anuncio: string;
-  fipe: string;
-  valor: string;
-  ano: string;
-  quilometragem: string;
-  placa: string;
-  cambio: string;
-  local: string;
-  pericia_aprova: boolean;
-  pericia_motivo: string;
-  leilao: boolean;
-}) {
-  const nome = fields.nome_anuncio || "[Nome do Anúncio]";
-  const fipe = fields.fipe || "[FIPE]";
-  const valorNum = parseCurrencyInput(fields.valor);
-  const valorDisplay = fields.valor
-    ? new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2 }).format(valorNum)
-    : "[Valor]";
-  const ano = fields.ano || "[ANO]";
-  const km = fields.quilometragem || "[KM]";
-  const placa = fields.placa ? fields.placa.toUpperCase() : "[PLACA]";
-  const cambio = fields.cambio || "[CÂMBIO]";
-  const local = fields.local || "[LOCAL]";
-  const pericia = fields.pericia_aprova
-    ? "APROVA ✅"
-    : `NÃO APROVA ❌${fields.pericia_motivo ? ` - ${fields.pericia_motivo}` : ""}`;
-  const leilaoLinha = fields.leilao ? "COM LEILÃO | SEM SINISTRO ✅" : "SEM LEILÃO | SEM SINISTRO ✅";
-
-  return `${nome}
-
-💸 FIPE: ~${fipe}~
-💰 VALOR: ${valorDisplay}
-
-ANO: ${ano} | KM: ${km}
-CÂMBIO: ${cambio}
-PERÍCIA: ${pericia}
-PLACA: ${placa}
-
-${leilaoLinha}
-
-PAGAMENTO NO CARTÃO DE CRÉDITO EM ATÉ 24X, FINANCIAMENTO EM TODOS OS BANCOS, SEM ENTRADA, SUJEITO À ANÁLISE DE CRÉDITO. CONSULTE NOSSOS VENDEDORES
-
-VEÍCULOS PARA FORA DO ESTADO DO PARANÁ: ADICIONAL DE 1% DO VALOR DA VENDA PARA NF
-
-📍 ${local}`;
-}
 
 const initialState: FormState = {
   nome_anuncio: "",
@@ -99,10 +53,15 @@ const initialState: FormState = {
   pericia_aprova: true,
   pericia_motivo: "",
   leilao: false,
+  sinistro: false,
+  valor_promocional_ativo: false,
+  valor_promocional: "",
+  empresa: "",
   texto_anuncio: buildAnuncioTemplate({
     nome_anuncio: "", fipe: "", valor: "", ano: "",
     quilometragem: "", placa: "", cambio: "", local: "",
-    pericia_aprova: true, pericia_motivo: "", leilao: false
+    pericia_aprova: true, pericia_motivo: "", leilao: false,
+    sinistro: false, valor_promocional_ativo: false, valor_promocional: "", empresa: ""
   })
 };
 
@@ -143,11 +102,15 @@ export function AnuncioForm() {
         local: current.local,
         pericia_aprova: current.pericia_aprova,
         pericia_motivo: current.pericia_motivo,
-        leilao: current.leilao
+        leilao: current.leilao,
+        sinistro: current.sinistro,
+        valor_promocional_ativo: current.valor_promocional_ativo,
+        valor_promocional: current.valor_promocional,
+        empresa: current.empresa
       })
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.placaLetra, form.cambio, form.local, form.pericia_aprova, form.pericia_motivo, form.leilao]);
+  }, [form.nome_anuncio, form.fipe, form.valor, form.ano, form.quilometragem, form.placa, form.placaLetra, form.cambio, form.local, form.pericia_aprova, form.pericia_motivo, form.leilao, form.sinistro, form.valor_promocional_ativo, form.valor_promocional, form.empresa]);
 
   function updateField<K extends keyof FormState>(field: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -358,7 +321,37 @@ export function AnuncioForm() {
                 No anúncio: <span className="font-semibold text-app-green">{valorFormatado},00</span>
               </p>
             ) : null}
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+              <input
+                type="checkbox"
+                className="accent-app-green h-4 w-4"
+                checked={form.valor_promocional_ativo}
+                onChange={(event) => {
+                  updateField("valor_promocional_ativo", event.target.checked);
+                  if (!event.target.checked) updateField("valor_promocional", "");
+                }}
+              />
+              Valor promocional
+            </label>
           </label>
+
+          {form.valor_promocional_ativo ? (
+            <label className="space-y-2">
+              <span className="app-label">Valor promocional</span>
+              <input
+                className="app-input"
+                value={form.valor_promocional}
+                onChange={(event) => updateField("valor_promocional", cleanCurrencyInput(event.target.value))}
+                inputMode="numeric"
+                required
+              />
+              {form.valor_promocional ? (
+                <p className="text-xs text-app-muted">
+                  No anúncio: <span className="font-semibold text-app-green">{formatValorDisplay(form.valor_promocional)},00</span>
+                </p>
+              ) : null}
+            </label>
+          ) : null}
 
           <label className="space-y-2">
             <span className="app-label">FIPE</span>
@@ -452,6 +445,32 @@ export function AnuncioForm() {
             </div>
           </div>
 
+          <div className="space-y-2 md:col-span-2">
+            <span className="app-label">Sinistro?</span>
+            <div className="flex gap-4">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                <input
+                  type="radio"
+                  name="sinistro"
+                  className="accent-app-green h-4 w-4"
+                  checked={form.sinistro === false}
+                  onChange={() => updateField("sinistro", false)}
+                />
+                NÃO (padrão)
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-app-white">
+                <input
+                  type="radio"
+                  name="sinistro"
+                  className="accent-app-green h-4 w-4"
+                  checked={form.sinistro === true}
+                  onChange={() => updateField("sinistro", true)}
+                />
+                SIM
+              </label>
+            </div>
+          </div>
+
           <label className="space-y-2">
             <span className="app-label">Tipo</span>
             <select
@@ -471,6 +490,16 @@ export function AnuncioForm() {
               className="app-input"
               value={form.local}
               onChange={(event) => updateField("local", event.target.value)}
+              required
+            />
+          </label>
+
+          <label className="space-y-2">
+            <span className="app-label">Empresa</span>
+            <input
+              className="app-input"
+              value={form.empresa}
+              onChange={(event) => updateField("empresa", event.target.value)}
               required
             />
           </label>
